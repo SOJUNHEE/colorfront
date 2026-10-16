@@ -1,0 +1,28 @@
+{
+    "name": "colorfront",
+    "version": "0.1.0",
+    "private": true,
+    "description": "COLORFRONT — web 3D paint TPS (Phase 1: offline single-player prototype)",
+    "type": "module",
+    "workspaces": [
+        "packages/*",
+        "apps/*"
+    ],
+    "scripts": {
+        "dev": "npm run dev -w @colorfront/client",
+        "build": "npm run build -w @colorfront/client",
+        "preview": "npm run start -w @colorfront/client",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "typecheck": "tsc -p packages/shared --noEmit && tsc -p tests --noEmit && npm run typecheck -w @colorfront/client",
+        "lint": "npm run lint -w @colorfront/client"
+    },
+    "devDependencies": {
+        "@types/node": "^24.0.0",
+        "typescript": "~6.0.3",
+        "vitest": "^5.0.5"
+    },
+    "engines": {
+        "node": ">=22.23.2"
+    }
+}

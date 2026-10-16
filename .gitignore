@@ -1,0 +1,28 @@
+# Dependencies and build output
+node_modules
+dist
+dist-ssr
+lib
+coverage
+*.tsbuildinfo
+
+# Local / secret configuration (keep only the documented example)
+.env
+.env.*
+!.env.example
+*.local
+*.pem
+*.key
+
+# Logs and tool output
+*.log
+.playwright-mcp/
+test-results/
+playwright-report/
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea

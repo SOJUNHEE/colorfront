@@ -1,0 +1,11 @@
+{
+    "name": "@colorfront/shared",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Types, rules and pure simulation shared by the COLORFRONT client and (future) server",
+    "type": "module",
+    "exports": {
+        ".": "./src/index.ts"
+    },
+    "sideEffects": false
+}
