@@ -616,3 +616,232 @@
     background: var(--ui-bg-strong);
     text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
 }
+
+/* ---------- Online match (Phase 3) ---------- */
+.match {
+    position: absolute;
+    inset: 0;
+}
+
+.net-badge {
+    position: absolute;
+    /* Below the FPS readout (three monospace lines). */
+    top: calc(var(--ui-gap) + 74px);
+    left: var(--ui-gap);
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    max-width: min(340px, calc(50% - 300px));
+    min-width: 160px;
+}
+
+.net-badge[data-status='connected'] {
+    color: #7dffb0;
+}
+
+.net-badge[data-status='connecting'],
+.net-badge[data-status='reconnecting'] {
+    color: #ffd166;
+}
+
+.net-badge[data-status='disconnected'],
+.net-badge[data-status='error'] {
+    color: var(--ui-warn);
+}
+
+.match-phase {
+    position: absolute;
+    top: calc(var(--ui-gap) + 64px);
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+    white-space: nowrap;
+}
+
+.match-phase.urgent {
+    color: var(--ui-warn);
+}
+
+.match-lobby {
+    position: absolute;
+    top: 30%;
+    right: var(--ui-gap);
+    width: min(280px, 40vw);
+    padding: 10px 14px;
+    font-size: 13px;
+}
+
+.match-lobby h3 {
+    margin: 0 0 6px;
+    font-size: 13px;
+    color: var(--ui-muted);
+    letter-spacing: 0.1em;
+}
+
+.roster {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.roster li {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 3px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.roster li.blue {
+    color: #8db8ff;
+}
+
+.roster li.orange {
+    color: #ffae64;
+}
+
+.roster li span {
+    color: var(--ui-muted);
+    font-size: 12px;
+}
+
+.roster li span.ready {
+    color: #7dffb0;
+}
+
+.lobby-hint {
+    margin: 8px 0 0;
+    color: var(--ui-muted);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.match-countdown {
+    position: absolute;
+    left: 50%;
+    top: 30%;
+    transform: translateX(-50%);
+    font-size: clamp(64px, 10vw, 120px);
+    font-weight: 900;
+    color: var(--ui-accent);
+    text-shadow: 0 4px 18px rgba(0, 0, 0, 0.8);
+}
+
+.match-results {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(560px, calc(100% - 32px));
+    padding: 18px 22px;
+    background: var(--ui-bg-strong);
+    text-align: center;
+}
+
+.match-results h2 {
+    margin: 0 0 8px;
+    font-size: clamp(20px, 2.4vw, 28px);
+}
+
+.match-results h2[data-winner='blue'] {
+    color: #8db8ff;
+}
+
+.match-results h2[data-winner='orange'] {
+    color: #ffae64;
+}
+
+.result-score {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 10px;
+}
+
+.match-results table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.match-results th,
+.match-results td {
+    padding: 4px 6px;
+    text-align: right;
+}
+
+.match-results th:first-child,
+.match-results td:first-child {
+    text-align: left;
+}
+
+.match-results tr.blue td:first-child {
+    color: #8db8ff;
+}
+
+.match-results tr.orange td:first-child {
+    color: #ffae64;
+}
+
+.match-results tr.me {
+    background: rgba(53, 230, 220, 0.12);
+}
+
+.result-meta {
+    margin: 10px 0 0;
+    color: var(--ui-muted);
+    font-size: 11px;
+}
+
+.menu .mode-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.menu .mode-row .play {
+    margin-top: 0;
+}
+
+.menu .play.secondary {
+    background: transparent;
+    color: var(--ui-text);
+    border: 1px solid var(--ui-border);
+}
+
+.menu .name-field {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 14px;
+    font-size: 14px;
+}
+
+.menu .name-field input {
+    flex: 1;
+    padding: 8px 10px;
+    color: var(--ui-text);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius);
+    font: inherit;
+}
+
+.menu.online .dev-offline {
+    display: none;
+}
+
+@media (max-width: 720px) {
+    .menu .mode-row {
+        grid-template-columns: 1fr;
+    }
+
+    .net-badge {
+        max-width: none;
+        top: auto;
+        bottom: calc(var(--ui-gap) + 120px);
+    }
+}

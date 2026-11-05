@@ -38,6 +38,8 @@ export class Hud {
     private hitTimer = 0;
     private damageLevel = 0;
     private lastScoreKey = '';
+    private modeLabel = '오프라인 로컬 매치';
+    private online = false;
 
     constructor(parent: HTMLElement) {
         this.root = document.createElement('div');
@@ -94,6 +96,13 @@ export class Hud {
 
     setVisible(visible: boolean) {
         this.root.classList.toggle('hidden', !visible);
+    }
+
+    /** Where the score comes from (offline local grid vs. server), shown under the score bar. */
+    setModeLabel(label: string) {
+        this.modeLabel = label;
+        this.online = label.startsWith('온라인');
+        this.lastScoreKey = '';
     }
 
     setFpsVisible(visible: boolean) {
@@ -163,7 +172,7 @@ export class Hud {
         }
         this.ammo.classList.toggle('low', state.ammo <= Math.ceil((weapon.magazineSize ?? 0) * 0.2));
         this.root.dataset.team = state.team;
-        this.team.textContent = `팀 ${state.team === 'blue' ? '▲ BLUE' : '■ ORANGE'} · [T] 전환 (개발용)`;
+        this.team.textContent = `팀 ${state.team === 'blue' ? '▲ BLUE' : '■ ORANGE'} · ${this.online ? '서버 배정' : '[T] 전환 (개발용)'}`;
 
         const cooldown = state.dashCooldownTicks;
         this.dash.classList.toggle('ready', cooldown === 0);
@@ -204,6 +213,6 @@ export class Hud {
         this.barOrange.style.width = `${paintPercent(score.orange, score.paintable)}%`;
         this.scoreSub.textContent =
             `미점령 ${pct(score.unpainted, score.paintable)} · ` +
-            `${score.blue.toLocaleString()} / ${score.orange.toLocaleString()} / ${score.paintable.toLocaleString()}셀 · 오프라인 로컬 매치`;
+            `${score.blue.toLocaleString()} / ${score.orange.toLocaleString()} / ${score.paintable.toLocaleString()}셀 · ${this.modeLabel}`;
     }
 }

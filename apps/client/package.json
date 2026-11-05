@@ -16,6 +16,7 @@
     },
     "dependencies": {
         "@colorfront/shared": "*",
+        "@colyseus/sdk": "^0.18.5",
         "playcanvas": "^2.23.1"
     },
     "devDependencies": {

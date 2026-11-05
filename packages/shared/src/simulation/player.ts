@@ -73,6 +73,32 @@ export function stepPlayer(
     paint?: PaintGrid,
     targets: readonly PlayerState[] = []
 ): PlayerStepResult {
+    return stepPlayerCore(state, input, world, paint, targets, true);
+}
+
+/**
+ * Client-side prediction of the local player (Phase 3): the same weapon timing and paint-aware
+ * movement as `stepPlayer`, but the grid is only read, never painted. `targets` only shape the
+ * visual trace; hits, damage and paint are decided by the server.
+ */
+export function predictPlayer(
+    state: PlayerState,
+    input: PlayerInput,
+    world: CollisionWorld,
+    paint: PaintGrid | undefined,
+    targets: readonly PlayerState[] = []
+): PlayerStepResult {
+    return stepPlayerCore(state, input, world, paint, targets, false);
+}
+
+function stepPlayerCore(
+    state: PlayerState,
+    input: PlayerInput,
+    world: CollisionWorld,
+    paint: PaintGrid | undefined,
+    targets: readonly PlayerState[],
+    writePaint: boolean
+): PlayerStepResult {
     const def = WEAPONS[state.weaponId];
     if (state.invulnerableTicks > 0) state.invulnerableTicks--;
     const weapon = stepWeapon(state, input, def);
@@ -85,7 +111,7 @@ export function stepPlayer(
     let paintedCells = 0;
     if (weapon.fired) {
         shot = traceShot(world, state, def.range, targets);
-        if (paint && shot.impact && shot.normal && !shot.hitPlayerId) {
+        if (writePaint && paint && shot.impact && shot.normal && !shot.hitPlayerId) {
             paintedCells = paint.paintSphere(shot.impact, def.paintRadius, state.team, shot.normal);
         }
     }

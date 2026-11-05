@@ -2,7 +2,7 @@
     "name": "colorfront",
     "version": "0.1.0",
     "private": true,
-    "description": "COLORFRONT — web 3D paint TPS (Phase 1: offline single-player prototype)",
+    "description": "COLORFRONT — web 3D paint TPS (Phase 3: authoritative multiplayer)",
     "type": "module",
     "workspaces": [
         "packages/*",
@@ -10,12 +10,17 @@
     ],
     "scripts": {
         "dev": "npm run dev -w @colorfront/client",
+        "dev:server": "npm run dev -w @colorfront/server",
+        "start:server": "npm run start -w @colorfront/server",
         "build": "npm run build -w @colorfront/client",
         "preview": "npm run start -w @colorfront/client",
         "test": "vitest run",
+        "test:unit": "vitest run tests/unit",
+        "test:net": "vitest run tests/integration",
         "test:watch": "vitest",
-        "typecheck": "tsc -p packages/shared --noEmit && tsc -p tests --noEmit && npm run typecheck -w @colorfront/client",
-        "lint": "npm run lint -w @colorfront/client"
+        "typecheck": "tsc -p packages/shared --noEmit && tsc -p tests --noEmit && npm run typecheck -w @colorfront/client && npm run typecheck -w @colorfront/server",
+        "lint": "npm run lint -w @colorfront/client",
+        "load": "tsx tests/load/netBots.ts"
     },
     "devDependencies": {
         "@types/node": "^24.0.0",

@@ -14,7 +14,8 @@ const CONTROLS: [string, string, boolean][] = [
     ['좌클릭', '페인트 사격 (6발/초 · 사거리 25m)', true],
     ['R', '재장전 (1.8초)', true],
     ['ESC', '설정 / 일시정지', true],
-    ['T', '팀 전환 — 개발용', true],
+    ['G', '준비 / 준비 취소 (온라인 대기실)', true],
+    ['T', '팀 전환 — 오프라인 개발용', true],
     ['Tab · M · 1~4', '스코어보드 · 맵 · 무기 (추후)', false]
 ];
 
@@ -27,10 +28,22 @@ export class SettingsMenu {
     private settings: GameSettings;
     private readonly title: HTMLElement;
     private readonly playButton: HTMLButtonElement;
+    private readonly modeRow: HTMLElement;
+    private readonly nameInput: HTMLInputElement;
+    private readonly nameField: HTMLElement;
+    private readonly onlineRow: HTMLElement;
+    private readonly readyButton: HTMLButtonElement;
+    private readonly sub: HTMLElement;
     private readonly message: HTMLElement;
 
     onChange?: (settings: GameSettings) => void;
     onPlay?: () => void;
+    /** Start screen: join the authoritative server with this nickname. */
+    onPlayOnline?: (name: string) => void;
+    /** Start screen: offline practice with local bots (no server). */
+    onPlayOffline?: () => void;
+    onReady?: () => void;
+    onLeaveOnline?: () => void;
     onTeam?: (team: TeamId) => void;
     onClearPaint?: () => void;
     onBots?: (count: number) => void;
@@ -44,9 +57,18 @@ export class SettingsMenu {
             <div class="menu panel" role="dialog" aria-modal="true" aria-labelledby="menu-title">
                 <header>
                     <h1 id="menu-title"></h1>
-                    <p class="menu-sub">Neon Terminal · 오프라인 도색·전투 테스트 (로컬 봇 지원)</p>
+                    <p class="menu-sub"></p>
                 </header>
-                <button class="play" type="button"></button>
+                <label class="name-field"><span>닉네임</span><input type="text" maxlength="12" autocomplete="nickname" spellcheck="false" placeholder="2~12자" /></label>
+                <div class="mode-row">
+                    <button class="play" type="button" data-mode="online">온라인 매치 참가</button>
+                    <button class="play secondary" type="button" data-mode="offline">오프라인 연습 (로컬 봇)</button>
+                </div>
+                <button class="play" type="button" data-mode="continue"></button>
+                <div class="mode-row online-row hidden">
+                    <button class="play secondary" type="button" data-action="ready">준비 [G]</button>
+                    <button class="play secondary" type="button" data-action="leave">방 나가기</button>
+                </div>
                 <p class="menu-message" role="alert"></p>
                 <div class="menu-columns">
                     <section>
@@ -89,6 +111,8 @@ export class SettingsMenu {
                             ${CONTROLS.map(([k, v, on]) => `<div class="${on ? '' : 'later'}"><dt>${k}</dt><dd>${v}</dd></div>`).join('')}
                         </dl>
                         <h2 class="dev-title">개발자 도구</h2>
+                        <p class="menu-sub online-only">온라인 매치에서는 서버가 팀·페인트·판정을 결정하므로 로컬 개발자 도구가 꺼집니다.</p>
+                        <div class="dev-offline">
                         <div class="field">
                             <span>내 팀 (도색 색상)</span>
                             <div class="seg" data-dev="team">
@@ -109,16 +133,32 @@ export class SettingsMenu {
                             <button type="button" class="ghost" data-action="clear-paint">페인트 초기화</button>
                             <button type="button" class="ghost" data-action="victory">승리 포즈</button>
                         </div>
+                        </div>
                     </section>
                 </div>
             </div>`;
         parent.append(this.root);
 
         this.title = this.root.querySelector('#menu-title')!;
-        this.playButton = this.root.querySelector('.play')!;
+        this.playButton = this.root.querySelector('[data-mode="continue"]')!;
+        this.modeRow = this.root.querySelector('.mode-row')!;
+        this.nameInput = this.root.querySelector('.name-field input')!;
+        this.nameField = this.root.querySelector('.name-field')!;
+        this.onlineRow = this.root.querySelector('.online-row')!;
+        this.readyButton = this.root.querySelector('[data-action="ready"]')!;
+        this.sub = this.root.querySelector('.menu-sub')!;
         this.message = this.root.querySelector('.menu-message')!;
+        this.nameInput.value = loadName();
 
         this.playButton.addEventListener('click', () => this.onPlay?.());
+        this.root.querySelector('[data-mode="online"]')!.addEventListener('click', () => {
+            const name = this.nameInput.value.trim();
+            saveName(name);
+            this.onPlayOnline?.(name);
+        });
+        this.root.querySelector('[data-mode="offline"]')!.addEventListener('click', () => this.onPlayOffline?.());
+        this.readyButton.addEventListener('click', () => this.onReady?.());
+        this.root.querySelector('[data-action="leave"]')!.addEventListener('click', () => this.onLeaveOnline?.());
         for (const seg of this.root.querySelectorAll<HTMLElement>('.seg[data-key]')) {
             seg.addEventListener('click', (e) => {
                 const button = (e.target as HTMLElement).closest('button');
@@ -155,13 +195,37 @@ export class SettingsMenu {
             request.catch(() => this.setMessage('이 브라우저에서 전체화면을 사용할 수 없습니다.'));
         });
 
+        this.setOnline(false);
         this.render();
     }
 
+    private online = false;
+
     show(mode: 'start' | 'paused') {
-        this.title.textContent = mode === 'start' ? 'COLORFRONT' : '일시정지';
-        this.playButton.textContent = mode === 'start' ? '클릭하여 플레이' : '계속하기';
+        const start = mode === 'start';
+        this.title.textContent = start ? 'COLORFRONT' : '일시정지';
+        this.playButton.textContent = '계속하기';
+        this.playButton.classList.toggle('hidden', start);
+        this.modeRow.classList.toggle('hidden', !start);
+        this.nameField.classList.toggle('hidden', !start);
+        this.onlineRow.classList.toggle('hidden', start || !this.online);
+        this.sub.textContent = start
+            ? 'Neon Terminal · 온라인 15 vs 15 페인트 매치 (권위 서버) 또는 오프라인 연습 (로컬 봇)'
+            : this.online
+              ? '온라인 매치 진행 중 · 게임은 일시정지되지 않습니다'
+              : '오프라인 연습 · 로컬 봇은 네트워크 플레이어가 아닙니다';
         this.root.classList.remove('hidden');
+    }
+
+    /** Online mode hides the offline-only developer tools (the server decides teams and paint). */
+    setOnline(online: boolean) {
+        this.online = online;
+        this.root.querySelector('.menu')!.classList.toggle('online', online);
+        for (const el of this.root.querySelectorAll<HTMLElement>('.online-only')) el.classList.toggle('hidden', !online);
+    }
+
+    setReady(ready: boolean) {
+        this.readyButton.textContent = ready ? '준비 취소 [G]' : '준비 [G]';
     }
 
     hide() {
@@ -201,5 +265,23 @@ export class SettingsMenu {
         }
         this.root.querySelector('output[data-for="sensitivity"]')!.textContent = s.sensitivity.toFixed(2);
         this.root.querySelector('output[data-for="fov"]')!.textContent = `${s.fov}°`;
+    }
+}
+
+const NAME_KEY = 'colorfront.name';
+
+function loadName(): string {
+    try {
+        return localStorage.getItem(NAME_KEY) ?? '';
+    } catch {
+        return '';
+    }
+}
+
+function saveName(name: string) {
+    try {
+        localStorage.setItem(NAME_KEY, name);
+    } catch {
+        /* storage unavailable: the name is just not remembered */
     }
 }

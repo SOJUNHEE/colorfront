@@ -27,6 +27,8 @@ export class MatchSimulation {
     readonly players: PlayerState[] = [];
     readonly map: MapDefinition;
     tick = 0;
+    /** Per-player round statistics (GDD 5.1 result screen). */
+    readonly stats = new Map<string, { painted: number; kills: number; deaths: number }>();
     private spawnCursor: Record<TeamId, number> = { blue: 0, orange: 0 };
 
     constructor(map: MapDefinition, world?: CollisionWorld) {
@@ -43,12 +45,27 @@ export class MatchSimulation {
         const p = createPlayerState(id, team);
         this.spawn(p);
         this.players.push(p);
+        this.stats.set(id, { painted: 0, kills: 0, deaths: 0 });
         return p;
     }
 
     removePlayer(id: string) {
         const i = this.players.findIndex((p) => p.id === id);
         if (i >= 0) this.players.splice(i, 1);
+        this.stats.delete(id);
+    }
+
+    /** Start a new round: clear paint and stats, revive everyone at their spawn. */
+    resetRound() {
+        this.paint.clear();
+        this.spawnCursor = { blue: 0, orange: 0 };
+        for (const p of this.players) {
+            revive(p, WEAPONS[p.weaponId].magazineSize ?? 0);
+            p.invulnerableTicks = 0;
+            p.lastButtons = 0;
+            this.spawn(p);
+            this.stats.set(p.id, { painted: 0, kills: 0, deaths: 0 });
+        }
     }
 
     get(id: string): PlayerState | undefined {
@@ -77,24 +94,51 @@ export class MatchSimulation {
                 }
                 continue;
             }
-            const input = inputs.get(p.id) ?? { seq: p.lastProcessedSeq, moveX: 0, moveZ: 0, yaw: p.yaw, pitch: p.pitch, buttons: 0 };
-            const targets = this.players.filter((o) => o.team !== p.team && isVulnerable(o, this.map.spawnZones));
-            const r = stepPlayer(p, input, this.world, this.paint, targets);
-            events.push({ type: 'move', playerId: p.id, movement: r.movement });
-            if (r.movement.fellOut) this.spawn(p);
-            if (!r.shot) continue;
-            events.push({ type: 'shot', playerId: p.id, team: p.team, shot: r.shot, paintedCells: r.paintedCells });
-            const targetId = r.shot.hitPlayerId;
-            const target = targetId ? this.get(targetId) : undefined;
-            if (target && r.shot.impact) {
-                const result = applyDamage(target, WEAPONS[p.weaponId].damage ?? 0);
-                events.push({ type: 'hit', attackerId: p.id, targetId: target.id, damage: result.damage, at: r.shot.impact });
-                if (result.killed) {
-                    splattedNow.add(target.id);
-                    events.push({ type: 'splat', attackerId: p.id, targetId: target.id, team: target.team, at: { ...target.position } });
-                }
-            }
+            this.stepOne(p, inputs.get(p.id) ?? idleInput(p), events, splattedNow);
         }
         return events;
     }
+
+    /**
+     * Extra input steps within the current tick for the given players only (server catch-up after
+     * a client's inputs arrived late in a burst). Does not advance the clock or respawn timers;
+     * the server bounds how often a player may get one.
+     */
+    stepExtra(inputs: ReadonlyMap<string, PlayerInput>): MatchEvent[] {
+        const events: MatchEvent[] = [];
+        const splattedNow = new Set<string>();
+        for (const p of this.players) {
+            const input = inputs.get(p.id);
+            if (input && p.alive) this.stepOne(p, input, events, splattedNow);
+        }
+        return events;
+    }
+
+    private stepOne(p: PlayerState, input: PlayerInput, events: MatchEvent[], splattedNow: Set<string>) {
+        const targets = this.players.filter((o) => o.team !== p.team && isVulnerable(o, this.map.spawnZones));
+        const r = stepPlayer(p, input, this.world, this.paint, targets);
+        events.push({ type: 'move', playerId: p.id, movement: r.movement });
+        if (r.movement.fellOut) this.spawn(p);
+        if (!r.shot) return;
+        events.push({ type: 'shot', playerId: p.id, team: p.team, shot: r.shot, paintedCells: r.paintedCells });
+        const st = this.stats.get(p.id);
+        if (st) st.painted += r.paintedCells;
+        const targetId = r.shot.hitPlayerId;
+        const target = targetId ? this.get(targetId) : undefined;
+        if (target && r.shot.impact) {
+            const result = applyDamage(target, WEAPONS[p.weaponId].damage ?? 0);
+            events.push({ type: 'hit', attackerId: p.id, targetId: target.id, damage: result.damage, at: r.shot.impact });
+            if (result.killed) {
+                splattedNow.add(target.id);
+                const ks = this.stats.get(p.id);
+                const ds = this.stats.get(target.id);
+                if (ks) ks.kills++;
+                if (ds) ds.deaths++;
+                events.push({ type: 'splat', attackerId: p.id, targetId: target.id, team: target.team, at: { ...target.position } });
+            }
+        }
+    }
 }
+
+/** "No input": stand still, keep looking the same way, press nothing. */
+const idleInput = (p: PlayerState): PlayerInput => ({ seq: p.lastProcessedSeq, moveX: 0, moveZ: 0, yaw: p.yaw, pitch: p.pitch, buttons: 0 });

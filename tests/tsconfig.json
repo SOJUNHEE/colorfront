@@ -1,7 +1,14 @@
 {
     "extends": "../tsconfig.base.json",
     "compilerOptions": {
-        "types": ["node"]
+        "types": [
+            "node"
+        ]
     },
-    "include": ["unit", "../vitest.config.ts"]
+    "include": [
+        "unit",
+        "integration",
+        "load",
+        "../vitest.config.ts"
+    ]
 }

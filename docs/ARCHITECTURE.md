@@ -1,4 +1,4 @@
-# COLORFRONT 아키텍처 (Phase 2 + 그래픽 고도화 기준)
+# COLORFRONT 아키텍처 (Phase 3 권위 서버 멀티플레이 기준)
 
 GDD와 달라진 결정은 [DECISIONS.md](DECISIONS.md)에 있다.
 
@@ -13,12 +13,14 @@ GDD와 달라진 결정은 [DECISIONS.md](DECISIONS.md)에 있다.
 
 | 경로 | 역할 | 의존 |
 |---|---|---|
-| `packages/shared` | 타입, 상수, 규칙, 시뮬레이션, 맵, 프로토콜 초안 | 없음 (TS 소스 그대로 export) |
-| `apps/client` | PlayCanvas 렌더, 입력, HUD, 설정 | shared, playcanvas |
-| `apps/server` | **없음** (Phase 3에서 Colyseus 0.18로 생성) | — |
+| `packages/shared` | 타입, 상수, 규칙, 시뮬레이션, 맵, 프로토콜, 페인트 동기화 코덱 | 없음 (TS 소스 그대로 export) |
+| `apps/client` | PlayCanvas 렌더, 입력, HUD, 설정, 온라인 세션(예측·보간) | shared, playcanvas, @colyseus/sdk |
+| `apps/server` | Colyseus 0.18 권위 서버 (`MatchRoom`) | shared, @colyseus/core, @colyseus/schema, @colyseus/ws-transport |
 | `tests/unit` | shared 단위 테스트 | shared, vitest |
+| `tests/integration` | 실제 서버(임의 포트) + SDK 클라이언트 네트워크 테스트 | server, @colyseus/sdk |
+| `tests/load` | 네트워크 봇 부하 테스트 (`npm run load`) | server 실행 필요 |
 
-`@colorfront/shared`는 빌드 단계 없이 `.ts` 소스를 export 한다. 내부 import는 `.ts` 확장자와 지워지는 문법(`erasableSyntaxOnly`)만 쓰므로, Node 24의 타입 스트리핑으로도 직접 import 가능하다 (Phase 3 서버에서 별도 번들러 없이 사용 가능할 것으로 보이나, 서버 생성 시 검증 필요).
+`@colorfront/shared`는 빌드 단계 없이 `.ts` 소스를 export 한다. 내부 import는 `.ts` 확장자와 지워지는 문법(`erasableSyntaxOnly`)만 쓴다. 서버는 `tsx`로 이 소스를 그대로 실행한다(번들러 없음, 검증됨).
 
 ## 3. 핵심 타입 (`packages/shared/src/types`)
 
@@ -125,12 +127,51 @@ GDD 5.1의 VSync 항목은 브라우저가 제어를 허용하지 않아 넣지 
 ### 5.4 보안 메모
 HUD/메뉴의 `innerHTML`은 **고정 문자열 템플릿**에만 사용한다. 닉네임 등 사용자 입력(Phase 3+)은 반드시 `textContent`로 넣어야 한다 (GDD 7.4 XSS).
 
-## 6. 네트워크 경계 (아직 미구현)
-`packages/shared/src/protocol/messages.ts`에 GDD 7.2 메시지 이름과 페이로드 타입 **초안**만 있다. Colyseus 0.18 설치 후 실제 API(`room.send`/`onMessage`, Schema, 입력 큐/고정 스텝 API)와 대조해서 확정해야 한다. 이 시점 npm 기준 `colyseus` 0.18.9, `@colyseus/core` 0.18.18이 최신이다 (2026-10-16 조회, 설치하지 않음).
+## 6. 네트워크 (Phase 3)
 
-Phase 3 예상 흐름:
+### 6.1 흐름
 ```text
-Client tick:  input = sanitize(sample)  → stepPlayer(local)  → send(input)  → 버퍼에 보관
-Server tick:  for each queued input: sanitize → stepPlayer(authoritative) → state.lastProcessedSeq
-Client recv:  서버 상태로 되감기 → lastProcessedSeq 이후 입력 재적용 (reconciliation)
+Client (30 Hz)  input = sanitize(sample) → send('in', [seq, moveX, moveZ, yaw, pitch, buttons])
+                → predictPlayer(local)  (페인트는 읽기만, 칠하지 않음)  → pending에 보관
+Server (30 Hz)  MatchFlow.step → 플레이어마다 크레딧으로 입력 1개(+따라잡기 최대 2개) → MatchSimulation.step
+                → 이벤트 압축 브로드캐스트 · 페인트 델타(2틱마다) · 해시(2초마다) · Schema 패치(50ms)
+Client recv     내 플레이어: 서버 상태로 되감기 → seq 이후 입력 재적용 → 오차는 화면에서만 부드럽게
+                다른 플레이어: 100ms 뒤 시점으로 두 패치 사이 보간
+                페인트: 스냅샷/델타를 PaintGrid에 그대로 복사 (클라이언트가 도색을 계산하지 않음)
 ```
+
+### 6.2 서버 `apps/server`
+- `app.ts` `createGameServer()` — `defineServer({ transport: WebSocketTransport, rooms: { match: defineRoom(MatchRoom) } })`, `/health`, `/metrics`.
+- `rooms/MatchRoom.ts`:
+  - `maxClients 30`, `setFixedTimestep(30 Hz)`, `setPatchRate(50)`, `maxMessagesPerSecond 90`.
+  - 팀은 적은 쪽에 배정한다(동률이면 블루).
+  - `onDrop` → `allowReconnection(30s)`. 재접속하면 hello와 페인트 스냅샷을 다시 보내고 StateView를 다시 붙인다.
+- 입력 처리(D-016): 모든 입력을 한 번씩만 처리하고, 크레딧으로 속도를 제한한다. 입력이 없으면 제자리 대기한다.
+- 신뢰하지 않는 것: 클라이언트가 보낸 위치·피해·도색·점수.
+  - `parseInput`은 정확히 6개 숫자 배열만 받는다.
+  - 알 수 없는 메시지는 버리고 `rejected`로 센다.
+  - 닉네임은 정제한다(제어문자·마크업 제거, 2~12자).
+- 개발 전용 옵션 `timing`/`minPlayers`는 `NODE_ENV=production`이면 무시한다.
+- 안정성(D-019): 틱 예외를 격리하고, 프로세스 예외를 로깅한다.
+
+### 6.3 프로토콜 `packages/shared/src/protocol/messages.ts`
+| 방향 | 이름 | 내용 |
+|---|---|---|
+| C→S | `in` | `[seq, moveX, moveZ, yaw, pitch, buttons]` |
+| C→S | `ready`, `paint:resync` | 준비 토글, 스냅샷 재요청 |
+| S→C | Schema 상태 | phase/round/tick/ticksLeft/점수, 플레이어(소유자 전용 필드 D-017) |
+| S→C | `hello` | sessionId, mapId, tickRate, patchRate |
+| S→C | `ev` | 사격(압축)·피격·스플랫·부활 이벤트 |
+| S→C | `paint:snapshot` / `paint:delta` (binary) | `PaintSync.ts`: 스냅샷 = 표면별 RLE, 델타 = 8×8셀 더티 타일 사각형 + RLE, `seq` 연속 |
+| S→C | `paint:hash` | 2초마다 FNV-1a 해시. 다르면 스냅샷을 다시 받는다 |
+| S→C | `round:result` | 확정된 결과(해시 포함), 플레이어별 도색·처치·사망 |
+
+### 6.4 클라이언트 `apps/client/src/network/OnlineSession.ts`
+- 접속 시 sessionStorage에 재접속 토큰이 있으면 `reconnect`를 먼저 시도한다(D-018). 없으면 `joinOrCreate` 또는 `?room=`으로 `joinById`.
+- `PaintReceiver`가 순서를 보장한다. 첫 스냅샷 전 델타는 무시하고, 중복은 버린다. 빈 seq가 생기면 재동기화를 한 번만 요청한다.
+- 온라인과 오프라인은 완전히 분리된다. 온라인에서는 로컬 봇·팀 전환·페인트 초기화가 꺼진다. 오프라인 연습(로컬 봇)은 그래픽·부하 도구로 남는다.
+
+### 6.5 검증
+- `tests/integration/network.test.ts`: 실제 서버를 임의 포트에 띄우고 SDK 클라이언트 2~3개로 검증한다(17개 테스트).
+- `tests/visual/twoBrowser/1~5`: 별도의 Chrome 프로세스 2개로 실제 클라이언트를 띄워 검증한다(`docs/PHASE3_REPORT.md`).
+- `tests/load/netBots.ts`: SDK 봇 N명이 한 라운드를 진행하고 서버 지표, 대역폭, 전원 해시 일치를 확인한다.

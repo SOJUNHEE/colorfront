@@ -5,6 +5,8 @@ import type { TeamId } from '../types/player.ts';
 
 /** GDD 6.1: 0.5 m cells. */
 export const PAINT_CELL_SIZE = 0.5;
+/** Dirty-tile edge in cells (4 m). Network deltas send whole changed tiles, not one bounding box. */
+export const PAINT_DIRTY_TILE = 8;
 
 /** Cell owner values. Every paintable cell holds exactly one of these. */
 export const PaintOwner = {
@@ -67,6 +69,9 @@ export class PaintGrid {
      * maxRow; empty when minCol > maxCol). Lets renderers and network deltas touch only what changed.
      */
     private readonly dirty: Int32Array;
+    /** Per surface: 1 per changed PAINT_DIRTY_TILE² tile, for compact network deltas. */
+    private readonly dirtyTiles: Uint8Array[] = [];
+    private readonly tileCols: number[] = [];
     revision = 0;
     paintableCount = 0;
     blueCount = 0;
@@ -100,6 +105,9 @@ export class PaintGrid {
             this.surfaces.push(surface);
             this.masks.push(mask);
             this.owners.push(new Uint8Array(cols * rows));
+            const tc = Math.ceil(cols / PAINT_DIRTY_TILE);
+            this.tileCols.push(tc);
+            this.dirtyTiles.push(new Uint8Array(tc * Math.ceil(rows / PAINT_DIRTY_TILE)));
         }
         this.surfaceRevisions = new Uint32Array(this.surfaces.length);
         this.dirty = new Int32Array(this.surfaces.length * 4);
@@ -109,6 +117,7 @@ export class PaintGrid {
     private resetDirty(i: number) {
         this.dirty[i * 4] = this.dirty[i * 4 + 1] = 0x7fffffff;
         this.dirty[i * 4 + 2] = this.dirty[i * 4 + 3] = -1;
+        this.dirtyTiles[i]?.fill(0);
     }
 
     private markDirty(i: number, c0: number, r0: number, c1: number, r1: number) {
@@ -118,6 +127,57 @@ export class PaintGrid {
         if (r0 < d[k + 1]) d[k + 1] = r0;
         if (c1 > d[k + 2]) d[k + 2] = c1;
         if (r1 > d[k + 3]) d[k + 3] = r1;
+        const tiles = this.dirtyTiles[i];
+        const tc = this.tileCols[i];
+        const T = PAINT_DIRTY_TILE;
+        for (let ty = Math.floor(r0 / T); ty <= Math.floor(r1 / T); ty++) {
+            for (let tx = Math.floor(c0 / T); tx <= Math.floor(c1 / T); tx++) tiles[ty * tc + tx] = 1;
+        }
+    }
+
+    /**
+     * Return and clear the changed area of a surface as a few rectangles [c0, r0, w, h] built from
+     * dirty tiles (horizontal runs, merged downwards when they line up). Also clears `takeDirty`.
+     */
+    takeDirtyRects(surfaceIndex: number): [number, number, number, number][] {
+        const k = surfaceIndex * 4;
+        if (this.dirty[k] > this.dirty[k + 2]) return [];
+        const s = this.surfaces[surfaceIndex];
+        const tiles = this.dirtyTiles[surfaceIndex];
+        const tc = this.tileCols[surfaceIndex];
+        const tr = tiles.length / tc;
+        const T = PAINT_DIRTY_TILE;
+        const rects: [number, number, number, number][] = [];
+        // Rect still open per column span from the previous tile row, so equal spans grow downwards.
+        let open = new Map<number, [number, number, number, number]>();
+        for (let ty = 0; ty < tr; ty++) {
+            const next = new Map<number, [number, number, number, number]>();
+            let tx = 0;
+            while (tx < tc) {
+                if (!tiles[ty * tc + tx]) {
+                    tx++;
+                    continue;
+                }
+                const start = tx;
+                while (tx < tc && tiles[ty * tc + tx]) tx++;
+                const key = start * 65536 + tx;
+                const r0 = ty * T;
+                const h = Math.min(s.rows, r0 + T) - r0;
+                const prev = open.get(key);
+                if (prev) {
+                    prev[3] += h;
+                    next.set(key, prev);
+                } else {
+                    const c0 = start * T;
+                    const rect: [number, number, number, number] = [c0, r0, Math.min(s.cols, tx * T) - c0, h];
+                    rects.push(rect);
+                    next.set(key, rect);
+                }
+            }
+            open = next;
+        }
+        this.resetDirty(surfaceIndex);
+        return rects;
     }
 
     /** Return and clear the changed rectangle of a surface, or null if nothing changed. */
@@ -128,6 +188,11 @@ export class PaintGrid {
         const rect: [number, number, number, number] = [d[k], d[k + 1], d[k + 2], d[k + 3]];
         this.resetDirty(surfaceIndex);
         return rect;
+    }
+
+    /** Forget all pending dirty rectangles (e.g. after a full snapshot replaced them). */
+    discardDirty(): void {
+        for (let i = 0; i < this.surfaces.length; i++) this.resetDirty(i);
     }
 
     /** Reset every cell to unpainted. */
@@ -235,6 +300,54 @@ export class PaintGrid {
             orange: this.orangeCount,
             unpainted: this.paintableCount - this.blueCount - this.orangeCount
         };
+    }
+
+    /**
+     * Overwrite a rectangle of a surface with owners received from the authoritative server.
+     * Masked cells are forced to None; counts, revision and dirty rect are kept consistent.
+     * @returns number of cells whose owner changed.
+     */
+    applyRect(surfaceIndex: number, c0: number, r0: number, w: number, h: number, data: Uint8Array, offset = 0): number {
+        const surface = this.surfaces[surfaceIndex];
+        if (!surface || c0 < 0 || r0 < 0 || w <= 0 || h <= 0 || c0 + w > surface.cols || r0 + h > surface.rows) {
+            throw new RangeError('paint rect out of range');
+        }
+        const owners = this.owners[surfaceIndex];
+        const mask = this.masks[surfaceIndex];
+        let changed = 0;
+        for (let row = 0; row < h; row++) {
+            let i = (r0 + row) * surface.cols + c0;
+            for (let col = 0; col < w; col++, i++) {
+                const raw = data[offset + row * w + col];
+                const next = mask[i] && (raw === PaintOwner.Blue || raw === PaintOwner.Orange) ? raw : PaintOwner.None;
+                const prev = owners[i];
+                if (prev === next) continue;
+                if (prev === PaintOwner.Blue) this.blueCount--;
+                else if (prev === PaintOwner.Orange) this.orangeCount--;
+                if (next === PaintOwner.Blue) this.blueCount++;
+                else if (next === PaintOwner.Orange) this.orangeCount++;
+                owners[i] = next;
+                changed++;
+            }
+        }
+        if (changed > 0) {
+            this.surfaceRevisions[surfaceIndex]++;
+            this.revision++;
+            this.markDirty(surfaceIndex, c0, r0, c0 + w - 1, r0 + h - 1);
+        }
+        return changed;
+    }
+
+    /** FNV-1a hash over every surface's owners: equal hashes mean identical paint (practically). */
+    hash(): number {
+        let h = 0x811c9dc5;
+        for (const owners of this.owners) {
+            for (let i = 0; i < owners.length; i++) {
+                h ^= owners[i];
+                h = Math.imul(h, 0x01000193);
+            }
+        }
+        return h >>> 0;
     }
 
     /** Full scan, used by tests and future resync checks to validate the incremental counters. */
