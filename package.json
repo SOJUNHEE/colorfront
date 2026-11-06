@@ -20,7 +20,8 @@
         "test:watch": "vitest",
         "typecheck": "tsc -p packages/shared --noEmit && tsc -p tests --noEmit && npm run typecheck -w @colorfront/client && npm run typecheck -w @colorfront/server",
         "lint": "npm run lint -w @colorfront/client",
-        "load": "tsx tests/load/netBots.ts"
+        "load": "tsx tests/load/netBots.ts",
+        "avatar:validate": "python assets-src/blender/scripts/validate_avatar.py"
     },
     "devDependencies": {
         "@types/node": "^24.0.0",

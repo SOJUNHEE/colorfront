@@ -1,0 +1,12 @@
+
+> colorfront@0.1.0 typecheck
+> tsc -p packages/shared --noEmit && tsc -p tests --noEmit && npm run typecheck -w @colorfront/client && npm run typecheck -w @colorfront/server
+
+
+> @colorfront/client@0.1.0 typecheck
+> tsc --noEmit
+
+
+> @colorfront/server@0.1.0 typecheck
+> tsc --noEmit
+

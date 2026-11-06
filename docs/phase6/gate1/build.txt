@@ -1,0 +1,24 @@
+
+> colorfront@0.1.0 build
+> npm run build -w @colorfront/client
+
+
+> @colorfront/client@0.1.0 build
+> vite build
+
+[36mvite v8.3.4 [32mbuilding client environment for production...[36m[39m
+transforming...
+✓ 1345 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                          0.56 kB │ gzip:   0.33 kB
+dist/assets/playcanvas-ysrUGN-S.png     14.31 kB
+dist/assets/index-BRx4ZarF.css          11.11 kB │ gzip:   3.10 kB
+dist/assets/index-Cz6EDhVB.js        1,567.53 kB │ gzip: 428.21 kB
+
+[32m✓ built in 540ms[39m
+[33m[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
