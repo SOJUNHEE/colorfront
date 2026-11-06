@@ -1,0 +1,31 @@
+
+> colorfront@0.1.0 test
+> vitest run
+
+
+ RUN  v5.0.5 C:/Users/user/Desktop/정리전_261105/05_개인실습_사이드프로젝트/5-5_게임개발/fps/colorfront
+
+ ❯ tests/integration/network.test.ts (17 tests | 1 failed) 33290ms
+   ❯ network: authoritative movement (5)
+     × cannot be sped up by flooding inputs (one input per tick, bounded queue) 1237ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/network.test.ts > network: authoritative movement > cannot be sped up by flooding inputs (one input per tick, bounded queue)
+AssertionError: expected 5.1999999999999815 to be less than 4.316400000000001
+ ❯ tests/integration/network.test.ts:192:22
+    190|         const dist = Math.hypot(p.x - start.x, p.z - start.z);
+    191|         // Never faster than walking, whatever was sent.
+    192|         expect(dist).toBeLessThan(MOVEMENT.walkSpeed * (elapsed + 0.15…
+       |                      ^
+    193|     });
+    194|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 10 passed (11)
+      Tests  1 failed | 108 passed (109)
+   Start at  20:34:11
+   Duration  39.32s (tests 96%, import 2%, transform 2%)
+

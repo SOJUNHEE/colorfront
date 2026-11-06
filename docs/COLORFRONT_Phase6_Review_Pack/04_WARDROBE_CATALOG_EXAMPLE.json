@@ -1,0 +1,28 @@
+{
+  "$comment": "예시 계약만 제시. 파일 경로의 GLB는 아직 제작되지 않았음. 런타임에 투입하기 전 검증/라이선스 확보 필요.",
+  "schemaVersion": 1,
+  "baseRig": "colorfront-courier-v1",
+  "coordinateContract": {"up": "+Y", "forward": "-Z", "unit": "meter", "heightTarget": 1.65},
+  "defaultAppearance": {
+    "version": 1,
+    "hairId": "hair_sidepart",
+    "headwearId": "none",
+    "topId": "top_bomber",
+    "bottomId": "bottom_cargo",
+    "shoesId": "shoes_runner",
+    "backId": "back_tank_standard",
+    "weaponSkinId": "weapon_rifle_default",
+    "colorVariant": "graphite"
+  },
+  "items": [
+    {"id":"hair_sidepart","slot":"hair","asset":"/assets/clothes/hair_sidepart.glb","socket":"head","renderMode":"rigid","hideRegions":[],"license":"original-TODO"},
+    {"id":"top_bomber","slot":"top","asset":"/assets/clothes/top_bomber.glb","renderMode":"skinned","hideRegions":["torso","upperArms"],"license":"original-TODO"},
+    {"id":"bottom_cargo","slot":"bottom","asset":"/assets/clothes/bottom_cargo.glb","renderMode":"skinned","hideRegions":["hips","thighs"],"license":"original-TODO"},
+    {"id":"shoes_runner","slot":"shoes","asset":"/assets/clothes/shoes_runner.glb","renderMode":"skinned","hideRegions":["feet"],"license":"original-TODO"},
+    {"id":"back_tank_standard","slot":"back","asset":"/assets/clothes/back_tank_standard.glb","socket":"chest","renderMode":"rigid","hideRegions":[],"requiredGameplayVisibility":["ammoLevel","teamColor"],"license":"original-TODO"},
+    {"id":"weapon_rifle_default","slot":"weaponSkin","asset":"/assets/weapons/paint_rifle.glb","socket":"gun","renderMode":"rigid","hideRegions":[],"requiredGameplayVisibility":["muzzle"],"license":"original-TODO"}
+  ],
+  "allowedColorVariants": ["graphite","ivory","sand"],
+  "allowedTeams": ["blue","orange"],
+  "lodBudgetsTrianglesTotalPerAvatar": {"LOD0":8000,"LOD1":3000,"LOD2":1200}
+}

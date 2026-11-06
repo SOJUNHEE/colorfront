@@ -1,0 +1,8 @@
+
+> colorfront@0.1.0 lint
+> npm run lint -w @colorfront/client
+
+
+> @colorfront/client@0.1.0 lint
+> eslint .
+
