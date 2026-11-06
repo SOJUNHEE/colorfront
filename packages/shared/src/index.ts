@@ -6,6 +6,7 @@ export * from './input/buttons.ts';
 export * from './map/decor.ts';
 export * from './map/neonTerminal.ts';
 export * from './map/neonTerminalDecor.ts';
+export * from './map/neonTerminalSkin.ts';
 export * from './map/types.ts';
 export * from './paint/PaintGrid.ts';
 export * from './paint/PaintSync.ts';

@@ -1,4 +1,4 @@
-import { buildCollisionWorld, buildNeonTerminalDecor, surfaceTopAt } from '@colorfront/shared';
+import { buildCollisionWorld, buildNeonTerminalDecor, buildNeonTerminalSkin, decorBounds, surfaceTopAt } from '@colorfront/shared';
 import type {
     CompiledSolid,
     DecorItem,
@@ -188,7 +188,10 @@ export function buildArena(
     }
 
     // ---- Decor (visual only) ----
-    const decor = buildNeonTerminalDecor(options.decorDensity);
+    const base = buildNeonTerminalDecor(options.decorDensity);
+    // Gate 5 visual skin: detail derived from the solids (kept clear of the signs).
+    const signBounds = base.filter((d) => d.kind === 'sign').map(decorBounds);
+    const decor = [...base, ...buildNeonTerminalSkin(map, options.decorDensity, signBounds)];
     const materialFor = (m: DecorMaterial): [StandardMaterial, boolean] => {
         switch (m) {
             case 'trim':
