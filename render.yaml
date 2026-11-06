@@ -1,0 +1,26 @@
+# Render Blueprint — one web service: authoritative game server + the built client (same origin).
+# TLS is terminated by Render, so the page is https and the game socket is wss on the same host.
+services:
+  - type: web
+    name: colorfront
+    runtime: node
+    region: singapore        # closest Render region to Korea
+    plan: starter            # 0.5 CPU / 512 MB; the free plan sleeps after 15 min and has 0.1 CPU
+    rootDir: .
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm run start:server
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: STATIC_DIR
+        value: apps/client/dist
+      # Add the final https://<service>.onrender.com (and any custom domain) here; the
+      # service's own host is always accepted.
+      - key: ALLOWED_ORIGINS
+        value: ""
+      - key: METRICS_TOKEN
+        generateValue: true

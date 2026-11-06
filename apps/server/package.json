@@ -13,13 +13,15 @@
         "@colorfront/shared": "*",
         "@colyseus/core": "^0.18.18",
         "@colyseus/schema": "^5.0.40",
-        "@colyseus/ws-transport": "^0.18.4"
+        "@colyseus/ws-transport": "^0.18.4",
+        "express": "^5.3.0",
+        "tsx": "^4.23.15"
     },
     "engines": {
         "node": ">=22.23.2"
     },
     "devDependencies": {
         "@colyseus/sdk": "^0.18.5",
-        "tsx": "^4.23.15"
+        "@types/express": "^5.0.6"
     }
 }

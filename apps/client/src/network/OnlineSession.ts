@@ -128,6 +128,9 @@ export function defaultServerUrl(): string {
     }
     if (env) return env;
     const secure = location.protocol === 'https:';
+    // Production build: the game server also serves the page (one origin, wss behind TLS).
+    // Dev server / `vite preview` (port 4173): the game server runs separately on :2567.
+    if (import.meta.env.PROD && location.port !== '4173' && location.host) return `${secure ? 'wss' : 'ws'}://${location.host}`;
     return `${secure ? 'wss' : 'ws'}://${location.hostname || 'localhost'}:2567`;
 }
 
