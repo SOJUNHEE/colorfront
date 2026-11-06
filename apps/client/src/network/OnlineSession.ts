@@ -1,5 +1,6 @@
 import {
     ClientMessage,
+    LOOK_MIN_INTERVAL_MS,
     PaintReceiver,
     ROOM_NAME,
     ServerMessage,
@@ -54,6 +55,8 @@ export type NetActor = {
     kills: number;
     deaths: number;
     painted: number;
+    /** Cosmetic outfit as replicated by the server (look string, Gate 3-B). */
+    look: string;
     state: PlayerState;
     snapshots: Snapshot[];
 };
@@ -61,6 +64,7 @@ export type NetActor = {
 export type RawInput = { moveX: number; moveZ: number; yaw: number; pitch: number; buttons: number };
 
 type NetPlayerLike = {
+    look?: string;
     name: string;
     team: string;
     connected: boolean;
@@ -162,6 +166,9 @@ export class OnlineSession {
     private lastAckSeq = 0;
 
     rttMs = 0;
+    /** Recent ping samples; the readout is their median so one stalled ping (e.g. while assets
+     *  load right after joining) does not linger in the display. */
+    private readonly rttSamples: number[] = [];
     private pingTimer = 0;
     bytesIn = 0;
     bytesOut = 0;
@@ -173,6 +180,12 @@ export class OnlineSession {
     private lastShotEventAt = 0;
 
     onActorAdded?: (actor: NetActor) => void;
+    /** A player's replicated outfit changed (not called for the initial value). */
+    onActorLook?: (actor: NetActor) => void;
+    /** Outfit sent at join and on change (look string). */
+    look = '';
+    private lastLookSent = 0;
+    private lookTimer: ReturnType<typeof setTimeout> | undefined;
     onActorRemoved?: (id: string) => void;
     onEvents?: (events: NetEvent[]) => void;
     /** Surfaces whose paint changed in a server message. */
@@ -220,7 +233,10 @@ export class OnlineSession {
         }
         if (!room) {
             try {
-                room = roomId ? await this.client.joinById(roomId, { name }) : await this.client.joinOrCreate(ROOM_NAME, { ...devRoomOptions, name });
+                const look = this.look || undefined;
+                room = roomId
+                    ? await this.client.joinById(roomId, { name, look })
+                    : await this.client.joinOrCreate(ROOM_NAME, { ...devRoomOptions, name, look });
             } catch (err) {
                 this.error = err instanceof Error ? err.message : String(err);
                 this.setStatus('error');
@@ -300,6 +316,25 @@ export class OnlineSession {
         this.room?.send(ClientMessage.Ready, ready);
     }
 
+    /**
+     * Change this player's replicated outfit. The server accepts one change per
+     * LOOK_MIN_INTERVAL_MS, so quick successive saves are coalesced and only the latest is sent.
+     */
+    setLook(look: string) {
+        this.look = look;
+        clearTimeout(this.lookTimer);
+        if (!this.room || this.status !== 'connected') return; // goes with the join / welcome
+        const wait = this.lastLookSent + LOOK_MIN_INTERVAL_MS + 50 - Date.now();
+        if (wait <= 0) this.sendLook();
+        else this.lookTimer = setTimeout(() => this.sendLook(), wait);
+    }
+
+    private sendLook() {
+        if (!this.room || this.status !== 'connected') return;
+        this.room.send(ClientMessage.Look, this.look);
+        this.lastLookSent = Date.now();
+    }
+
     /** Debug/test only: drop the socket as a network failure would (the SDK reconnects). */
     simulateDrop() {
         if (!this.room) return;
@@ -317,7 +352,12 @@ export class OnlineSession {
         this.pingTimer -= 1;
         if (this.pingTimer <= 0 && this.room && this.status === 'connected') {
             this.pingTimer = TICK_RATE;
-            this.room.ping((ms) => (this.rttMs = this.rttMs ? this.rttMs * 0.7 + ms * 0.3 : ms));
+            this.room.ping((ms) => {
+                this.rttSamples.push(ms);
+                if (this.rttSamples.length > 5) this.rttSamples.shift();
+                const sorted = [...this.rttSamples].sort((x, y) => x - y);
+                this.rttMs = sorted[Math.floor(sorted.length / 2)];
+            });
         }
         const local = this.local;
         if (!local || !this.room || this.status !== 'connected') return null;
@@ -369,6 +409,7 @@ export class OnlineSession {
                     kills: 0,
                     deaths: 0,
                     painted: 0,
+                    look: p.look ?? '',
                     state: createPlayerState(id, p.team as TeamId),
                     snapshots: []
                 };
@@ -381,6 +422,10 @@ export class OnlineSession {
                     this.onWelcome?.(actor);
                 }
                 this.onActorAdded?.(actor);
+            }
+            if ((p.look ?? '') !== actor.look) {
+                actor.look = p.look ?? '';
+                this.onActorLook?.(actor);
             }
             actor.name = p.name;
             actor.team = p.team as TeamId;

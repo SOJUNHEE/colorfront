@@ -4,7 +4,11 @@ import {
     SLOT_FIELD,
     WARDROBE_ITEMS,
     WARDROBE_SLOTS,
+    DEFAULT_LOOK,
     appearanceKey,
+    decodeAppearance,
+    encodeAppearance,
+    isValidLook,
     randomAppearance,
     sanitizeAppearance,
     withItem
@@ -61,5 +65,37 @@ describe('avatar appearance allowlist (Phase 6 Gate 3)', () => {
         for (const slot of WARDROBE_SLOTS) expect(WARDROBE_ITEMS[slot]).toContain(a[SLOT_FIELD[slot]]);
         s = 1;
         expect(appearanceKey(randomAppearance(rand))).toBe(appearanceKey(a));
+    });
+
+    describe('wire format (Gate 3-B)', () => {
+        const all: (typeof DEFAULT_APPEARANCE)[] = [{ ...DEFAULT_APPEARANCE }];
+        for (const slot of WARDROBE_SLOTS) {
+            const next: (typeof DEFAULT_APPEARANCE)[] = [];
+            for (const a of all) for (const id of WARDROBE_ITEMS[slot]) next.push({ ...a, [SLOT_FIELD[slot]]: id });
+            all.splice(0, all.length, ...next);
+        }
+
+        it('round-trips every outfit through a short versioned string', () => {
+            for (const a of all) {
+                const look = encodeAppearance(a);
+                expect(look.length).toBeLessThanOrEqual(40);
+                expect(isValidLook(look)).toBe(true);
+                expect(decodeAppearance(look)).toEqual(a);
+            }
+            expect(DEFAULT_LOOK).toBe('1:0.0.0.0.0.0.0.0');
+        });
+
+        it('rejects malformed or hostile look strings (decodes to the default outfit)', () => {
+            const bad = [
+                '', 'x', '0.0.0.0.0.0.0.0', '2:0.0.0.0.0.0.0.0', '1:0.0.0.0.0.0.0', '1:0.0.0.0.0.0.0.0.0',
+                '1:9.0.0.0.0.0.0.0', '1:0.0.0.0.0.0.0.5', '1:-1.0.0.0.0.0.0.0', '1:0.0.0.0.0.0.0.0 ', '1:0,0,0,0,0,0,0,0',
+                '1:0.0.0.0.0.0.0.0<script>', 'https://evil.example/a.glb', '1:' + '0.'.repeat(500) + '0',
+                null, undefined, 3, {}, [], { toString: () => '1:0.0.0.0.0.0.0.0' }
+            ];
+            for (const b of bad) {
+                expect(isValidLook(b)).toBe(false);
+                expect(decodeAppearance(b)).toEqual(DEFAULT_APPEARANCE);
+            }
+        });
     });
 });

@@ -46,7 +46,7 @@ export class WardrobePanel {
                 <button type="button" class="ghost" data-act="cancel">취소</button>
                 <button type="button" class="play" data-act="save">저장</button>
             </div>
-            <p class="wardrobe-note">저장한 외형은 이 기기에만 보관됩니다. 온라인 다른 플레이어에게 보이는 기능은 다음 단계에서 추가됩니다.</p>`;
+            <p class="wardrobe-note">저장한 외형은 이 기기에 보관되고, 온라인 매치에서는 다른 플레이어에게도 보입니다 (외형만 바뀌며 능력치·판정은 같습니다).</p>`;
         parent.append(this.root);
         this.info = this.root.querySelector('.wardrobe-info')!;
         this.slots = this.root.querySelector('.wardrobe-slots')!;

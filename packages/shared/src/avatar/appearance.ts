@@ -120,3 +120,44 @@ export function randomAppearance(rand: () => number): AvatarAppearance {
     }
     return a;
 }
+
+// ── wire format (Gate 3-B) ─────────────────────────────────────────────────────────────────────
+// An outfit travels as a short versioned string of per-slot indices into WARDROBE_ITEMS plus the
+// colour variant: "1:" + "h.w.t.b.s.k.g.c" (e.g. "1:1.0.0.1.0.0.0.0"). The item lists above are
+// APPEND-ONLY so old indices keep meaning the same item. Anything that is not exactly this shape
+// (wrong version, length, characters, out-of-range index) is rejected / decodes to defaults.
+
+export const LOOK_VERSION = 1;
+export const LOOK_MAX_LENGTH = 40;
+const LOOK_FIELDS = WARDROBE_SLOTS.length + 1;
+const LOOK_PATTERN = new RegExp(String.raw`^${LOOK_VERSION}:\d{1,2}(\.\d{1,2}){${LOOK_FIELDS - 1}}$`);
+
+export function encodeAppearance(a: AvatarAppearance): string {
+    const s = sanitizeAppearance(a);
+    const idx = WARDROBE_SLOTS.map((slot) => (WARDROBE_ITEMS[slot] as readonly string[]).indexOf(s[SLOT_FIELD[slot]]));
+    idx.push((COLOR_VARIANTS as readonly string[]).indexOf(s.colorVariant));
+    return `${LOOK_VERSION}:${idx.join('.')}`;
+}
+
+/** True only for a well-formed look whose every index names an allowlisted item. */
+export function isValidLook(look: unknown): look is string {
+    if (typeof look !== 'string' || look.length > LOOK_MAX_LENGTH || !LOOK_PATTERN.test(look)) return false;
+    const idx = look.slice(look.indexOf(':') + 1).split('.').map(Number);
+    return (
+        WARDROBE_SLOTS.every((slot, i) => idx[i] < WARDROBE_ITEMS[slot].length) && idx[WARDROBE_SLOTS.length] < COLOR_VARIANTS.length
+    );
+}
+
+/** Decode a (possibly hostile) look string. Invalid input gives the default outfit. Never throws. */
+export function decodeAppearance(look: unknown): AvatarAppearance {
+    if (!isValidLook(look)) return { ...DEFAULT_APPEARANCE };
+    const idx = look.slice(look.indexOf(':') + 1).split('.').map(Number);
+    const out: AvatarAppearance = { ...DEFAULT_APPEARANCE };
+    WARDROBE_SLOTS.forEach((slot, i) => {
+        out[SLOT_FIELD[slot]] = WARDROBE_ITEMS[slot][idx[i]];
+    });
+    out.colorVariant = COLOR_VARIANTS[idx[WARDROBE_SLOTS.length]];
+    return out;
+}
+
+export const DEFAULT_LOOK = encodeAppearance(DEFAULT_APPEARANCE);

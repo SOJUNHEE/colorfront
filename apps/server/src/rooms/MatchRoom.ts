@@ -1,6 +1,7 @@
 import {
     ClientMessage,
     InputButton,
+    LOOK_MIN_INTERVAL_MS,
     MAX_PLAYERS_PER_ROOM,
     MatchFlow,
     MatchSimulation,
@@ -9,10 +10,13 @@ import {
     RECONNECT_GRACE_SECONDS,
     ServerMessage,
     TICK_RATE,
+    decodeAppearance,
+    encodeAppearance,
     encodePaintDelta,
     encodePaintSnapshot,
     finalizeRound,
     flowTiming,
+    isValidLook,
     packShot,
     packVec
 } from '@colorfront/shared';
@@ -65,6 +69,8 @@ type Session = {
     lastSeq: number;
     /** Simulated inputs this player may still use (see INPUT_CREDIT_CAP). */
     credits: number;
+    /** Wall-clock ms of the last accepted outfit change (cosmetic, rate limited). */
+    lastLookAt: number;
 };
 
 /**
@@ -111,6 +117,7 @@ export class MatchRoom extends Room<{ state: MatchState }> {
             if (p && this.flow.phase === 'WAITING') p.ready = ready === true;
         });
         this.onMessage(ClientMessage.PaintResync, (client) => this.sendSnapshot(client));
+        this.onMessage(ClientMessage.Look, (client, raw) => this.onLook(client, raw));
         this.onMessage('metrics', (client) => client.send('metrics', this.metricsSnapshot()));
         // Anything else (forged "damage"/"paint"/position messages, old clients) is dropped and counted.
         this.onMessage('*', () => this.metrics.rejected++);
@@ -118,7 +125,7 @@ export class MatchRoom extends Room<{ state: MatchState }> {
         this.setFixedTimestep(() => this.safeStep(), TICK_RATE);
     }
 
-    onJoin(client: Client, options: { name?: unknown } = {}) {
+    onJoin(client: Client, options: { name?: unknown; look?: unknown } = {}) {
         const team = this.pickTeam();
         const name = sanitizeName(options?.name, client.sessionId);
         const state = this.sim.addPlayer(client.sessionId, team);
@@ -130,10 +137,13 @@ export class MatchRoom extends Room<{ state: MatchState }> {
         net.kills = 0;
         net.deaths = 0;
         net.painted = 0;
+        // Cosmetic only: re-encoded from the allowlist, so whatever the client sent can only ever
+        // become a known outfit (invalid -> default).
+        net.look = encodeAppearance(decodeAppearance(options?.look));
         this.writePlayer(net, state);
         this.state.players.set(client.sessionId, net);
         this.giveOwnerView(client);
-        this.sessions.set(client.sessionId, { queue: [], last: null, lastSeq: 0, credits: 1 });
+        this.sessions.set(client.sessionId, { queue: [], last: null, lastSeq: 0, credits: 1, lastLookAt: 0 });
         this.greet(client);
     }
 
@@ -189,6 +199,20 @@ export class MatchRoom extends Room<{ state: MatchState }> {
         let orange = 0;
         this.state.players.forEach((p) => (p.team === 'blue' ? blue++ : orange++));
         return orange < blue ? 'orange' : 'blue';
+    }
+
+    /** Outfit change (Gate 3-B): validated against the shared allowlist and rate limited. It only
+     *  changes the replicated `look` string; movement, hits, paint and teams never read it. */
+    private onLook(client: Client, raw: unknown) {
+        const p = this.state.players.get(client.sessionId);
+        const s = this.sessions.get(client.sessionId);
+        const now = Date.now();
+        if (!p || !s || !isValidLook(raw) || now - s.lastLookAt < LOOK_MIN_INTERVAL_MS) {
+            this.metrics.rejected++;
+            return;
+        }
+        s.lastLookAt = now;
+        p.look = encodeAppearance(decodeAppearance(raw));
     }
 
     private onInput(client: Client, raw: unknown) {

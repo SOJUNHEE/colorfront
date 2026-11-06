@@ -15,8 +15,13 @@ export const ClientMessage = {
     /** boolean */
     Ready: 'ready',
     /** Ask for a fresh paint snapshot (sequence gap or hash mismatch). */
-    PaintResync: 'paint:resync'
+    PaintResync: 'paint:resync',
+    /** Cosmetic outfit change: look string (see avatar/appearance.ts). Rate limited, validated. */
+    Look: 'look'
 } as const;
+
+/** Minimum time between accepted outfit changes from one player. */
+export const LOOK_MIN_INTERVAL_MS = 1000;
 export type ClientMessage = (typeof ClientMessage)[keyof typeof ClientMessage];
 
 export const ServerMessage = {

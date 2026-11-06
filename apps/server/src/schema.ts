@@ -38,7 +38,9 @@ export const NetPlayer = schema(
         respawn: t.uint8().view(),
         kills: t.uint16(),
         deaths: t.uint16(),
-        painted: t.uint32()
+        painted: t.uint32(),
+        /** Cosmetic outfit (validated look string, Phase 6 Gate 3-B). Never read by gameplay. */
+        look: t.string()
     },
     'NetPlayer'
 );

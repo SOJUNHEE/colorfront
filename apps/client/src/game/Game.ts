@@ -1,5 +1,4 @@
 import {
-    DEFAULT_APPEARANCE,
     FixedStepper,
     InputButton,
     MATCH_START,
@@ -8,6 +7,8 @@ import {
     TICK_DT,
     TICK_RATE,
     WEAPONS,
+    decodeAppearance,
+    encodeAppearance,
     paintSpeedMultiplier,
     randomAppearance,
     reloadTicks,
@@ -149,6 +150,8 @@ export class Game {
         this.wardrobe.onSave = (a) => {
             this.appearance = { ...a };
             const ok = saveAppearance(a);
+            // Online: everyone else sees the new outfit (cosmetic; the server validates it).
+            this.online?.setLook(encodeAppearance(a));
             this.hud.showToast(ok ? '외형을 저장했습니다' : '이 브라우저에 저장하지 못했습니다 (이번 실행에만 적용)', 2);
         };
         this.wardrobe.onClose = () => this.menu.show(this.mode === 'menu' ? 'start' : 'paused');
@@ -276,6 +279,11 @@ export class Game {
 
         const session = new OnlineSession(this.sim.paint, this.sim.world);
         this.online = session;
+        session.look = encodeAppearance(this.appearance);
+        session.onActorLook = (net) => {
+            if (net.id === session.sessionId) return; // the local outfit is already shown
+            void this.actors.get(net.id)?.rig.setAppearance?.(decodeAppearance(net.look));
+        };
         session.onActorAdded = (net) => this.addNetActor(net);
         session.onActorRemoved = (id) => {
             const a = this.actors.get(id);
@@ -285,6 +293,8 @@ export class Game {
         };
         session.onWelcome = (net) => {
             this.localId = net.id;
+            // A reconnected seat keeps the server's look; send ours if it changed meanwhile.
+            if (net.look !== session.look) session.setLook(session.look);
             this.input.yaw = this.map.spawnZones.find((z) => z.team === net.team)?.yaw ?? 0;
             this.input.pitch = 0;
         };
@@ -315,10 +325,10 @@ export class Game {
     }
 
     private addNetActor(net: NetActor) {
-        // Until appearance replication (Gate 3-B) remote players use the default outfit; the
-        // local player shows its own saved outfit on this screen only.
+        // Remote players wear their replicated outfit (validated by the server, decoded against
+        // the shared allowlist again here); the local player shows its own saved outfit.
         const isLocal = net.id === this.online?.sessionId;
-        const look = isLocal ? this.appearance : DEFAULT_APPEARANCE;
+        const look = isLocal ? this.appearance : decodeAppearance(net.look);
         const rig = this.avatars.create(net.team, this.actors.size * 7 + 3, look);
         const actor: Actor = { state: net.state, rig, prev: { ...net.state.position }, bot: null, name: net.name, net };
         this.actors.set(net.id, actor);

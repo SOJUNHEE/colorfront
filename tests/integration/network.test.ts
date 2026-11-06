@@ -1,12 +1,16 @@
 import {
     AIM,
     ClientMessage,
+    DEFAULT_APPEARANCE,
+    DEFAULT_LOOK,
     InputButton,
+    LOOK_MIN_INTERVAL_MS,
     MOVEMENT,
     NEON_TERMINAL,
     PaintOwner,
     aimPivot,
     buildCollisionWorld,
+    encodeAppearance,
     lookAt,
     paintPercent,
     stepPlayer
@@ -434,4 +438,67 @@ describe('network: disconnect and reconnect', () => {
         open.splice(open.indexOf(B), 1);
         await waitFor(() => !A.state.players.has(sid), 3000, 'player removed');
     });
+});
+
+describe('network: avatar outfit replication (Gate 3-B, cosmetic only)', () => {
+    const SHELL = encodeAppearance({ ...DEFAULT_APPEARANCE, topId: 'top_hardshell', hairId: 'hair_crew', headwearId: 'headwear_cap' });
+    const SHORTS = encodeAppearance({ ...DEFAULT_APPEARANCE, bottomId: 'bottom_short' });
+
+    it('replicates the outfit chosen at join to every client, and sanitizes forged ones', async () => {
+        const a = await NetProbe.join(server.url, 'Alice', { look: SHELL });
+        const b = await NetProbe.join(server.url, 'Bob', { look: 'https://evil.example/hair.glb' }, a.probe.room.roomId);
+        open.push(a.probe, b.probe);
+        const A = a.probe;
+        const B = b.probe;
+        await waitFor(() => A.state?.players?.size === 2 && B.state?.players?.size === 2, 3000, 'both in state');
+        expect(B.state.players.get(A.sessionId).look).toBe(SHELL);
+        expect(A.state.players.get(B.sessionId).look).toBe(DEFAULT_LOOK);
+        expect(A.me().look).toBe(SHELL);
+    });
+
+    it('changes on request, rate limits, rejects forged values and never touches gameplay state', async () => {
+        const { A, B, room } = await pair();
+        const id = A.sessionId;
+        expect(B.state.players.get(id).look).toBe(DEFAULT_LOOK);
+        const sim = room.sim.get(id)!;
+        const before = { team: sim.team, hp: sim.hp, ammo: sim.ammo, x: sim.position.x, z: sim.position.z };
+        const rejected0 = room.metrics.rejected;
+        A.room.send(ClientMessage.Look, SHELL);
+        await waitFor(() => B.state.players.get(id).look === SHELL, 3000, 'B sees the new outfit');
+        // A second change inside the interval is dropped (and counted).
+        A.room.send(ClientMessage.Look, SHORTS);
+        await sleep(200);
+        expect(B.state.players.get(id).look).toBe(SHELL);
+        expect(room.metrics.rejected).toBe(rejected0 + 1);
+        await sleep(LOOK_MIN_INTERVAL_MS);
+        // Forged values after the interval: still rejected, look unchanged.
+        // (Messages above the transport's max payload close the socket outright; 200 chars stays below it.)
+        for (const bad of ['1:9.9.9.9.9.9.9.9', { topId: 'x' }, '1:' + '0.'.repeat(100), 42]) A.room.send(ClientMessage.Look, bad);
+        await sleep(200);
+        expect(B.state.players.get(id).look).toBe(SHELL);
+        expect(room.metrics.rejected).toBe(rejected0 + 5);
+        // A valid change after the interval goes through.
+        A.room.send(ClientMessage.Look, SHORTS);
+        await waitFor(() => B.state.players.get(id).look === SHORTS, 3000, 'second change replicated');
+        const after = room.sim.get(id)!;
+        expect({ team: after.team, hp: after.hp, ammo: after.ammo, x: after.position.x, z: after.position.z }).toEqual(before);
+    });
+
+    it('keeps the outfit for a late joiner and across a reconnect', async () => {
+        const { A, B } = await pair();
+        const id = A.sessionId;
+        A.room.send(ClientMessage.Look, SHELL);
+        await waitFor(() => B.state.players.get(id).look === SHELL, 3000, 'B sees outfit');
+        const late = await NetProbe.join(server.url, 'Cara', {}, A.room.roomId);
+        open.push(late.probe);
+        await waitFor(() => late.probe.state?.players?.get(id)?.look === SHELL, 3000, 'late joiner sees outfit');
+        A.room.reconnection.minUptime = 0;
+        const back = new Promise<void>((r) => A.room.onReconnect.once(() => r()));
+        A.room.connection.close(4010, 'test drop');
+        await back;
+        await waitFor(() => B.state.players.get(id)?.connected === true, 3000, 'reconnected');
+        expect(A.sessionId).toBe(id);
+        expect(B.state.players.get(id).look).toBe(SHELL);
+        expect(A.me().look).toBe(SHELL);
+    }, 15000);
 });

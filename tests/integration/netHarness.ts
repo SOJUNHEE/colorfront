@@ -67,7 +67,7 @@ export class NetProbe {
         room.onMessage('metrics', () => {});
     }
 
-    static async join(url: string, name: string, options: MatchRoomOptions = {}, roomId?: string) {
+    static async join(url: string, name: string, options: MatchRoomOptions & { look?: unknown } = {}, roomId?: string) {
         const client = new Client(url);
         const room = roomId ? await client.joinById(roomId, { name, ...options }) : await client.create(ROOM_NAME, { name, ...options });
         const probe = new NetProbe(room);
