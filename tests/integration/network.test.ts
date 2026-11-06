@@ -502,3 +502,34 @@ describe('network: avatar outfit replication (Gate 3-B, cosmetic only)', () => {
         expect(A.me().look).toBe(SHELL);
     }, 15000);
 });
+
+describe('network: weapons (Phase 6)', () => {
+    it('replicates the chosen weapon, fires every shotgun pellet and rejects forged choices', async () => {
+        const { A, B, room } = await pair();
+        const id = A.sessionId;
+        const rejected0 = room.metrics.rejected;
+        // Still in the spawn zone: the switch is immediate.
+        A.room.send(ClientMessage.Weapon, 'splash-shotgun');
+        await waitFor(() => B.state.players.get(id).weapon === 'splash-shotgun', 3000, 'B sees the shotgun');
+        expect(A.me().ammo).toBe(8);
+        await sleep(300);
+        for (const bad of ['rocket', { id: 'long-sniper' }, 42]) A.room.send(ClientMessage.Weapon, bad);
+        await sleep(200);
+        expect(room.metrics.rejected).toBe(rejected0 + 3);
+        expect(B.state.players.get(id).weapon).toBe('splash-shotgun');
+        // One trigger pull = 7 pellet events for everybody.
+        const before = B.events.filter((e) => e.t === 's' && e.p === id).length;
+        place(room, id, 0, 0, 13);
+        await hold(A, 120, 0, 0, -Math.PI / 2, -0.4, FIRE);
+        await hold(A, 100, 0, 0, -Math.PI / 2, -0.4, 0);
+        await sleep(200);
+        const pellets = B.events.filter((e) => e.t === 's' && e.p === id).length - before;
+        expect(pellets).toBe(7);
+        // Outside the spawn zone a new choice waits for the respawn (owner sees it queued).
+        await sleep(300);
+        A.room.send(ClientMessage.Weapon, 'long-sniper');
+        await waitFor(() => A.me().nextWeapon === 'long-sniper', 3000, 'queued for respawn');
+        expect(B.state.players.get(id).weapon).toBe('splash-shotgun');
+        expect(B.state.players.get(id).nextWeapon).toBeUndefined();
+    });
+});

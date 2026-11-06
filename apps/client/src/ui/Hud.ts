@@ -162,15 +162,18 @@ export class Hud {
 
         const weapon = WEAPONS[state.weaponId];
         this.ammo.textContent = String(state.ammo);
-        this.magazine.textContent = ` / ${weapon.magazineSize ?? '∞'}`;
-        this.weaponName.textContent = weapon.displayName.toUpperCase();
+        this.magazine.textContent = ` / ${weapon.magazineSize}`;
+        const next = state.nextWeaponId ? WEAPONS[state.nextWeaponId] : null;
+        this.weaponName.textContent = next ? `${weapon.label} → ${next.label} (부활 시)` : `${weapon.label} · [1–4] 교체`;
+        // Wider crosshair for spread weapons (visual hint of the pellet cone).
+        this.crosshair.style.setProperty('--spread', `${Math.round(weapon.spreadRad * 160)}px`);
         const reloading = state.reloadTicksRemaining > 0;
         this.reload.classList.toggle('active', reloading);
         if (reloading) {
             const total = reloadTicks(weapon) || 1;
             this.reloadFill.style.width = `${(1 - state.reloadTicksRemaining / total) * 100}%`;
         }
-        this.ammo.classList.toggle('low', state.ammo <= Math.ceil((weapon.magazineSize ?? 0) * 0.2));
+        this.ammo.classList.toggle('low', state.ammo <= Math.ceil(weapon.magazineSize * 0.2));
         this.root.dataset.team = state.team;
         this.team.textContent = `팀 ${state.team === 'blue' ? '▲ BLUE' : '■ ORANGE'} · ${this.online ? '서버 배정' : '[T] 전환 (개발용)'}`;
 

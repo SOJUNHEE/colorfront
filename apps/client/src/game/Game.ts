@@ -3,6 +3,7 @@ import {
     InputButton,
     MATCH_START,
     MatchSimulation,
+    PLAYABLE_WEAPONS,
     SimpleBot,
     TICK_DT,
     TICK_RATE,
@@ -27,7 +28,8 @@ import type {
     PlayerState,
     ShotTrace,
     TeamId,
-    Vec3
+    Vec3,
+    WeaponId
 } from '@colorfront/shared';
 import { Entity, Vec3 as PcVec3 } from 'playcanvas';
 import type { AppBase } from 'playcanvas';
@@ -213,6 +215,8 @@ export class Game {
             if (code === 'KeyT' && this.mode !== 'online')
                 this.setTeam(this.local.state.team === 'blue' ? 'orange' : 'blue');
             if (code === 'KeyG') this.toggleReady();
+            const slot = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(code);
+            if (slot >= 0 && PLAYABLE_WEAPONS[slot]) this.chooseWeapon(PLAYABLE_WEAPONS[slot]);
         };
         this.menu.setTeam(this.local.state.team);
 
@@ -396,6 +400,8 @@ export class Game {
             // Local bots wear random (deterministic) outfits: wardrobe variety / load checks.
             const look = randomAppearance(seededRandom(9000 + n));
             this.addActor(id, team, new SimpleBot(id, 9000 + n), `BOT-${String(n).padStart(2, '0')}`, look);
+            // Bots carry every weapon type (variety / balance checks); they start in their spawn.
+            this.sim.requestWeapon(id, PLAYABLE_WEAPONS[n % PLAYABLE_WEAPONS.length]);
         }
     }
 
@@ -464,10 +470,12 @@ export class Game {
             { moveX, moveZ, yaw: this.input.yaw, pitch: this.input.pitch, buttons: this.input.sampleButtons() },
             performance.now()
         );
-        if (step?.shot && local) {
-            // Predicted shot: recoil, rifle animation and slug now; paint arrives from the server.
-            const landing = this.handleEvent({ type: 'shot', playerId: this.localId, team: local.state.team, shot: step.shot, paintedCells: 0 });
-            this.landingUntil = Math.max(this.landingUntil, this.paintRenderer.now + landing);
+        if (step?.shots.length && local) {
+            // Predicted shot (every pellet): recoil, animation and slugs now; paint arrives from the server.
+            for (const shot of step.shots) {
+                const landing = this.handleEvent({ type: 'shot', playerId: this.localId, team: local.state.team, shot, paintedCells: 0 });
+                this.landingUntil = Math.max(this.landingUntil, this.paintRenderer.now + landing);
+            }
         }
     }
 
@@ -561,7 +569,8 @@ export class Game {
             this.updateShowcaseCamera(lx, ly, lz);
         } else {
             this.followCamera.zoom(this.input.consumeWheel());
-            this.followCamera.update(dt, { x: lx, y: ly, z: lz, yaw: this.input.yaw, pitch: this.input.pitch, aiming });
+            const aimZoom = WEAPONS[ls.weaponId].aimZoom;
+            this.followCamera.update(dt, { x: lx, y: ly, z: lz, yaw: this.input.yaw, pitch: this.input.pitch, aiming, aimZoom });
         }
         const cam = this.camera.getPosition();
         const profile = QUALITY_PROFILES[this.settings.quality];
@@ -682,6 +691,21 @@ export class Game {
         this.input.sensitivity = s.sensitivity;
         this.input.invertY = s.invertY;
         this.hud.setFpsVisible(s.showFps);
+    }
+
+    // ── weapons ────────────────────────────────────────────────────────────────
+
+    /** Weapon choice (keys 1–4 / menu). Equipped now in the own spawn zone, else at respawn. */
+    chooseWeapon(id: WeaponId) {
+        const def = WEAPONS[id];
+        if (this.mode === 'online') {
+            this.online?.setWeapon(id);
+            this.hud.showToast(`${def.label} 선택 — 스폰 구역 안이면 즉시, 아니면 다음 부활 때 교체`, 2);
+            return;
+        }
+        const r = this.sim.requestWeapon(this.localId, id);
+        if (r === 'now') this.hud.showToast(`${def.label} 장착 · ${def.role}`, 1.8);
+        else if (r === 'next') this.hud.showToast(`${def.label}: 다음 부활 때 교체됩니다 (스폰 구역에서는 즉시)`, 2.2);
     }
 
     // ── wardrobe ───────────────────────────────────────────────────────────────

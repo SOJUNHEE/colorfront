@@ -8,6 +8,11 @@ export const COMBAT = {
     invulnerableTicks: Math.round(RESPAWN.invulnerableSeconds * TICK_RATE)
 } as const;
 
+/** True inside the player's own team spawn zone (weapon switching, protection). */
+export function inOwnSpawnZone(p: PlayerState, zones: readonly SpawnZone[]): boolean {
+    return zones.some((z) => z.team === p.team && inZone(p, z));
+}
+
 const inZone = (p: PlayerState, z: SpawnZone) =>
     p.position.x > z.min.x && p.position.x < z.max.x && p.position.z > z.min.z && p.position.z < z.max.z;
 

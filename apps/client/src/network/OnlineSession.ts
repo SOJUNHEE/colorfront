@@ -6,6 +6,7 @@ import {
     ServerMessage,
     TICK_RATE,
     createPlayerState,
+    isWeaponId,
     predictPlayer,
     sanitizeInput
 } from '@colorfront/shared';
@@ -21,6 +22,7 @@ import type {
     PlayerState,
     PlayerStepResult,
     RoundResultMessage,
+    WeaponId,
     TeamId
 } from '@colorfront/shared';
 import { Client } from '@colyseus/sdk';
@@ -65,6 +67,8 @@ export type RawInput = { moveX: number; moveZ: number; yaw: number; pitch: numbe
 
 type NetPlayerLike = {
     look?: string;
+    weapon?: string;
+    nextWeapon?: string;
     name: string;
     team: string;
     connected: boolean;
@@ -329,6 +333,11 @@ export class OnlineSession {
         else this.lookTimer = setTimeout(() => this.sendLook(), wait);
     }
 
+    /** Choose a weapon (the server validates and decides now vs next respawn). */
+    setWeapon(id: WeaponId) {
+        if (this.room && this.status === 'connected') this.room.send(ClientMessage.Weapon, id);
+    }
+
     private sendLook() {
         if (!this.room || this.status !== 'connected') return;
         this.room.send(ClientMessage.Look, this.look);
@@ -447,6 +456,7 @@ export class OnlineSession {
                 s.hp = p.hp;
                 s.ammo = p.ammo;
                 s.reloadTicksRemaining = p.reload;
+                if (isWeaponId(p.weapon)) s.weaponId = p.weapon;
                 s.dashTicksRemaining = p.dash;
                 s.lastButtons = p.buttons;
             }
@@ -611,4 +621,6 @@ function writeState(s: PlayerState, p: NetPlayerLike) {
     s.invulnerableTicks = p.invuln ?? 0;
     s.respawnTicks = p.respawn ?? 0;
     s.team = p.team as TeamId;
+    if (isWeaponId(p.weapon)) s.weaponId = p.weapon;
+    s.nextWeaponId = isWeaponId(p.nextWeapon) ? p.nextWeapon : null;
 }

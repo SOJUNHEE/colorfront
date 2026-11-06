@@ -40,7 +40,11 @@ export const NetPlayer = schema(
         deaths: t.uint16(),
         painted: t.uint32(),
         /** Cosmetic outfit (validated look string, Phase 6 Gate 3-B). Never read by gameplay. */
-        look: t.string()
+        look: t.string(),
+        /** Equipped weapon id (everyone sees it: the gun model tells the weapon). */
+        weapon: t.string(),
+        /** Weapon queued for the next respawn (owner only). */
+        nextWeapon: t.string().view()
     },
     'NetPlayer'
 );

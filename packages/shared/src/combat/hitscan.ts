@@ -109,9 +109,16 @@ const add = (a: Vec3, d: Vec3, t: number): Vec3 => ({ x: a.x + d.x * t, y: a.y +
  * `targets` are the players this shot can hit (enemies that are alive); they also stop the
  * crosshair ray so aiming at an enemy aims the muzzle at them.
  */
-export function traceShot(world: CollisionWorld, state: PlayerState, range: number, targets: readonly PlayerState[] = []): ShotTrace {
+export function traceShot(
+    world: CollisionWorld,
+    state: PlayerState,
+    range: number,
+    targets: readonly PlayerState[] = [],
+    /** Pellet direction offset from the crosshair (spread), radians. */
+    offset?: { yaw: number; pitch: number }
+): ShotTrace {
     const pos = state.position;
-    const dir = aimDirection(state.yaw, state.pitch);
+    const dir = aimDirection(state.yaw + (offset?.yaw ?? 0), state.pitch + (offset?.pitch ?? 0));
     const pivot = aimPivot(world, pos, state.yaw);
     const aimHit = raycast(world, pivot, dir, AIM.aimDistance);
     const aimWorld = aimHit ? aimHit.distance : AIM.aimDistance;

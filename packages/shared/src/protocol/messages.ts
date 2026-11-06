@@ -17,8 +17,15 @@ export const ClientMessage = {
     /** Ask for a fresh paint snapshot (sequence gap or hash mismatch). */
     PaintResync: 'paint:resync',
     /** Cosmetic outfit change: look string (see avatar/appearance.ts). Rate limited, validated. */
-    Look: 'look'
+    Look: 'look',
+    /** Weapon choice (WeaponId). Equipped now inside the own spawn zone, else at next respawn. */
+    Weapon: 'weapon',
+    /** Chat line (string, validated and rate limited by the server). */
+    Chat: 'chat'
 } as const;
+
+/** Minimum time between accepted weapon choices from one player. */
+export const WEAPON_MIN_INTERVAL_MS = 250;
 
 /** Minimum time between accepted outfit changes from one player. */
 export const LOOK_MIN_INTERVAL_MS = 1000;

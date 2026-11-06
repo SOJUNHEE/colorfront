@@ -2,6 +2,7 @@ import {
     ClientMessage,
     InputButton,
     LOOK_MIN_INTERVAL_MS,
+    WEAPON_MIN_INTERVAL_MS,
     MAX_PLAYERS_PER_ROOM,
     MatchFlow,
     MatchSimulation,
@@ -71,6 +72,7 @@ type Session = {
     credits: number;
     /** Wall-clock ms of the last accepted outfit change (cosmetic, rate limited). */
     lastLookAt: number;
+    lastWeaponAt: number;
 };
 
 /**
@@ -118,6 +120,7 @@ export class MatchRoom extends Room<{ state: MatchState }> {
         });
         this.onMessage(ClientMessage.PaintResync, (client) => this.sendSnapshot(client));
         this.onMessage(ClientMessage.Look, (client, raw) => this.onLook(client, raw));
+        this.onMessage(ClientMessage.Weapon, (client, raw) => this.onWeapon(client, raw));
         this.onMessage('metrics', (client) => client.send('metrics', this.metricsSnapshot()));
         // Anything else (forged "damage"/"paint"/position messages, old clients) is dropped and counted.
         this.onMessage('*', () => this.metrics.rejected++);
@@ -143,7 +146,7 @@ export class MatchRoom extends Room<{ state: MatchState }> {
         this.writePlayer(net, state);
         this.state.players.set(client.sessionId, net);
         this.giveOwnerView(client);
-        this.sessions.set(client.sessionId, { queue: [], last: null, lastSeq: 0, credits: 1, lastLookAt: 0 });
+        this.sessions.set(client.sessionId, { queue: [], last: null, lastSeq: 0, credits: 1, lastLookAt: 0, lastWeaponAt: 0 });
         this.greet(client);
     }
 
@@ -213,6 +216,17 @@ export class MatchRoom extends Room<{ state: MatchState }> {
         }
         s.lastLookAt = now;
         p.look = encodeAppearance(decodeAppearance(raw));
+    }
+
+    /** Weapon choice: allowlisted id, rate limited; the simulation decides now vs next respawn. */
+    private onWeapon(client: Client, raw: unknown) {
+        const s = this.sessions.get(client.sessionId);
+        const now = Date.now();
+        if (!s || now - s.lastWeaponAt < WEAPON_MIN_INTERVAL_MS || this.sim.requestWeapon(client.sessionId, raw) === 'invalid') {
+            this.metrics.rejected++;
+            return;
+        }
+        s.lastWeaponAt = now;
     }
 
     private onInput(client: Client, raw: unknown) {
@@ -402,6 +416,8 @@ export class MatchRoom extends Room<{ state: MatchState }> {
         net.invuln = s.invulnerableTicks;
         net.respawn = s.respawnTicks;
         net.team = s.team;
+        net.weapon = s.weaponId;
+        net.nextWeapon = s.nextWeaponId ?? '';
     }
 
     private syncState() {

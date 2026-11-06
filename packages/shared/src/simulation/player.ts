@@ -3,7 +3,7 @@ import { type ShotTrace, traceShot } from '../combat/hitscan.ts';
 import type { SpawnZone } from '../map/types.ts';
 import type { PaintGrid } from '../paint/PaintGrid.ts';
 import { paintSpeedMultiplier } from '../rules/paint.ts';
-import { DEFAULT_WEAPON, WEAPONS, type WeaponStepResult, stepWeapon } from '../rules/weapons.ts';
+import { DEFAULT_WEAPON, WEAPONS, type WeaponStepResult, pelletOffsets, stepWeapon } from '../rules/weapons.ts';
 import type { PlayerInput, PlayerState, TeamId } from '../types/player.ts';
 import type { CollisionWorld } from './collision.ts';
 import { type MovementStepResult, stepMovement } from './movement.ts';
@@ -29,7 +29,8 @@ export function createPlayerState(id: string, team: TeamId): PlayerState {
         respawnTicks: 0,
         invulnerableTicks: 0,
         weaponId: weapon.id,
-        ammo: weapon.magazineSize ?? 0,
+        nextWeaponId: null,
+        ammo: weapon.magazineSize,
         reloadTicksRemaining: 0,
         fireCooldownTicks: 0
     };
@@ -53,8 +54,10 @@ export function placeAtSpawn(state: PlayerState, zone: SpawnZone, pointIndex: nu
 export interface PlayerStepResult {
     movement: MovementStepResult;
     weapon: WeaponStepResult;
-    /** Hitscan of the shot fired this tick, if any. */
+    /** Hitscan of the first pellet fired this tick, if any (same as shots[0]). */
     shot: ShotTrace | null;
+    /** Every pellet fired this tick (shotgun: several). */
+    shots: ShotTrace[];
     /** Cells whose owner changed because of this tick's shot. */
     paintedCells: number;
 }
@@ -107,13 +110,16 @@ function stepPlayerCore(
     const speedMultiplier = paint ? paintSpeedMultiplier(paint, state) : 1;
     const movement = stepMovement(state, input, world, TICK_DT, speedMultiplier);
 
-    let shot: ShotTrace | null = null;
+    const shots: ShotTrace[] = [];
     let paintedCells = 0;
     if (weapon.fired) {
-        shot = traceShot(world, state, def.range, targets);
-        if (writePaint && paint && shot.impact && shot.normal && !shot.hitPlayerId) {
-            paintedCells = paint.paintSphere(shot.impact, def.paintRadius, state.team, shot.normal);
+        for (const offset of pelletOffsets(def, input.seq)) {
+            const shot = traceShot(world, state, def.range, targets, offset);
+            shots.push(shot);
+            if (writePaint && paint && shot.impact && shot.normal && !shot.hitPlayerId) {
+                paintedCells += paint.paintSphere(shot.impact, def.paintRadius, state.team, shot.normal);
+            }
         }
     }
-    return { movement, weapon, shot, paintedCells };
+    return { movement, weapon, shot: shots[0] ?? null, shots, paintedCells };
 }

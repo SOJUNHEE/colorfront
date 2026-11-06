@@ -50,6 +50,8 @@ export interface PlayerState {
     invulnerableTicks: number;
 
     weaponId: WeaponId;
+    /** Weapon chosen while it could not be switched (in combat): equipped at the next respawn. */
+    nextWeaponId: WeaponId | null;
     ammo: number;
     reloadTicksRemaining: number;
     fireCooldownTicks: number;

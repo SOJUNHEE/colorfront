@@ -137,7 +137,7 @@
     top: 50%;
     width: 0;
     height: 0;
-    --gap: 7px;
+    --gap: calc(7px + var(--spread, 0px));
     --len: 8px;
     transition: --gap 0.1s;
 }
@@ -181,7 +181,7 @@
 }
 
 .crosshair.aiming {
-    --gap: 3px;
+    --gap: calc(3px + var(--spread, 0px) * 0.8);
     --len: 6px;
 }
 

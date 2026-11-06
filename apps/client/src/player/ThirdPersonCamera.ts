@@ -10,6 +10,8 @@ export type CameraTarget = {
     yaw: number;
     pitch: number;
     aiming: boolean;
+    /** FOV multiplier while aiming (weapon dependent; sniper zooms far). */
+    aimZoom?: number;
 };
 
 const MIN_DISTANCE = 2.5;
@@ -90,6 +92,7 @@ export class ThirdPersonCamera {
             (t.yaw * 180) / Math.PI + shakeY,
             sh * Math.sin(this.time * 31.0) * 1.2
         );
-        this.camera.camera!.fov = this.baseFov * (1 + (AIM_FOV_RATIO - 1) * this.aimBlend) + this.kickPitch * 0.5;
+        const zoom = t.aimZoom ?? AIM_FOV_RATIO;
+        this.camera.camera!.fov = this.baseFov * (1 + (zoom - 1) * this.aimBlend) + this.kickPitch * 0.5;
     }
 }
