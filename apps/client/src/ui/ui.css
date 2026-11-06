@@ -845,3 +845,121 @@
         bottom: calc(var(--ui-gap) + 120px);
     }
 }
+
+/* ---------- Wardrobe (Phase 6 Gate 3) ---------- */
+.wardrobe {
+    position: absolute;
+    top: var(--ui-gap);
+    right: var(--ui-gap);
+    bottom: var(--ui-gap);
+    width: min(400px, calc(100% - 2 * var(--ui-gap)));
+    padding: 16px 18px;
+    overflow-y: auto;
+    pointer-events: auto;
+    background: var(--ui-bg-strong);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.wardrobe-title {
+    margin: 0;
+    font-size: 20px;
+    letter-spacing: 0.04em;
+}
+
+.wardrobe-sub,
+.wardrobe-note {
+    margin: 0;
+    font-size: 12px;
+    color: var(--ui-muted);
+}
+
+.wardrobe-section h2 {
+    margin: 0 0 6px;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    color: var(--ui-muted);
+}
+
+.wardrobe-slots {
+    display: grid;
+    gap: 10px;
+}
+
+.wardrobe-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.wardrobe .chip {
+    padding: 7px 11px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--ui-text);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--ui-border);
+    border-radius: 999px;
+    cursor: pointer;
+}
+
+.wardrobe .chip:hover {
+    background: rgba(255, 255, 255, 0.09);
+}
+
+.wardrobe .chip[aria-pressed='true'] {
+    background: rgba(53, 230, 220, 0.18);
+    border-color: var(--ui-accent);
+    color: var(--ui-accent);
+    font-weight: 700;
+}
+
+.wardrobe-info {
+    margin: 0;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 12px;
+    color: var(--ui-accent);
+}
+
+.wardrobe-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: auto;
+}
+
+.wardrobe-actions button {
+    flex: 1;
+    padding: 10px 12px;
+    font: inherit;
+    font-size: 14px;
+    color: var(--ui-text);
+    background: transparent;
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius);
+    cursor: pointer;
+}
+
+.wardrobe-actions .play {
+    background: var(--ui-accent);
+    color: #04121a;
+    font-weight: 700;
+    border-color: transparent;
+}
+
+.wardrobe button:focus-visible {
+    outline: 2px solid var(--ui-accent);
+    outline-offset: 2px;
+}
+
+/* Phones / narrow windows: the panel becomes a bottom sheet, the avatar stays visible above. */
+@media (max-width: 640px) {
+    .wardrobe {
+        top: auto;
+        left: 8px;
+        right: 8px;
+        bottom: 8px;
+        width: auto;
+        max-height: 58vh;
+    }
+}

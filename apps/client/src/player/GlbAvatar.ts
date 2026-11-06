@@ -1,129 +1,28 @@
-import type { TeamId } from '@colorfront/shared';
-import { Asset, Entity, MeshInstance, Quat, SkinInstance, Texture, Vec3 } from 'playcanvas';
-import type { AppBase, ContainerResource, Material, Mesh, StandardMaterial } from 'playcanvas';
+import { DEFAULT_APPEARANCE, appearanceKey } from '@colorfront/shared';
+import type { AvatarAppearance, TeamId } from '@colorfront/shared';
+import { Entity, MeshInstance, Quat, SkinInstance, Vec3 } from 'playcanvas';
+import type { AppBase } from 'playcanvas';
+
+import { LOD_COUNT } from '../avatar/library.ts';
+import type { AvatarLibrary, OutfitMeshes } from '../avatar/library.ts';
 
 import type { AvatarView, RigPose } from './AvatarView.ts';
+
+export { AvatarLibrary } from '../avatar/library.ts';
 
 /**
  * Phase 6 GLB avatar ("Neon Courier", assets-src/blender/scripts/build_courier.py).
  *
- * Contract with the GLB (checked by assets-src/blender/scripts/validate_avatar.py):
+ * Contract with the GLBs (checked by assets-src/blender/scripts/validate_avatar.py):
  *  - 22 joints named like CharacterRig.ts, identity rest rotations, metres, +Y up, facing -Z;
  *  - arms are bound in an A-pose, so arm IK reads each bone's rest direction from the skeleton;
- *  - `muzzle` node under `gun`; `liquid` joint scales the tank fill (ammo);
- *  - material `cf_body` (palette/face atlas, team colours baked per team atlas) + `cf_glass`.
+ *  - `muzzle` node under `gun`; `liquid` joint scales the tank fill (ammo).
  *
- * Sharing: meshes and materials are loaded once (AvatarLibrary) and shared by every avatar.
- * Each avatar owns its skeleton entities and one SkinInstance per LOD mesh, so different players
- * never share a pose. Only the LOD0 skeleton is animated; LOD1/LOD2 meshes are bound to it.
- * Team changes swap to a cached per-team material (no vertex buffer writes).
+ * Wardrobe (Gate 3): the drawn mesh of each LOD is the merged outfit from AvatarLibrary (one opaque
+ * + one glass mesh, shared with every avatar wearing the same outfit). Changing clothes swaps the
+ * mesh of the existing mesh instances; the skeleton, skin instance and animation state stay.
+ * Each avatar owns its skeleton entities and ONE skin instance shared by all its mesh instances.
  */
-
-type Part = { mesh: Mesh; material: Material };
-
-const LOD_FILES = ['courier_default_lod0.glb', 'courier_default_lod1.glb', 'courier_default_lod2.glb'];
-
-function loadAsset(app: AppBase, name: string, type: string, url: string): Promise<Asset> {
-    return new Promise((resolve, reject) => {
-        const asset = new Asset(name, type, { url });
-        asset.once('load', () => resolve(asset));
-        asset.once('error', (err: unknown) => reject(new Error(`${url}: ${String(err)}`)));
-        app.assets.add(asset);
-        app.assets.load(asset);
-    });
-}
-
-function loadImage(url: string): Promise<HTMLImageElement> {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error(`image ${url}`));
-        img.src = url;
-    });
-}
-
-/** Shared, loaded-once avatar resources. */
-export class AvatarLibrary {
-    /** Bone hierarchy (incl. `muzzle`) without any render component; cloned per avatar. */
-    readonly skeleton: Entity;
-    /** Mesh/material pairs per LOD (index 0..2). */
-    readonly parts: Part[][];
-    private readonly teamMats = new Map<Material, Material>();
-
-    private constructor(skeleton: Entity, parts: Part[][]) {
-        this.skeleton = skeleton;
-        this.parts = parts;
-    }
-
-    static async load(app: AppBase, base = '/assets/characters/'): Promise<AvatarLibrary> {
-        const assets = await Promise.all(LOD_FILES.map((f) => loadAsset(app, f, 'container', base + f)));
-        let skeleton: Entity | null = null;
-        const parts = assets.map((a, lod) => {
-            const res = a.resource as ContainerResource;
-            const tmp = res.instantiateRenderEntity();
-            const out: Part[] = [];
-            for (const r of tmp.findComponents('render')) {
-                for (const mi of (r as unknown as { meshInstances: MeshInstance[] }).meshInstances) {
-                    if (mi.mesh && mi.material) out.push({ mesh: mi.mesh, material: mi.material });
-                    // Release the engine-created (cached) skin instance's bone texture now.
-                    mi.skinInstance?.destroy();
-                }
-                (r.entity as Entity).removeComponent('render');
-            }
-            if (lod === 0) skeleton = tmp;
-            else tmp.destroy();
-            return out;
-        });
-        // Every LOD GLB embeds the same atlas/ORM/emissive textures. Use LOD0's materials for all
-        // LODs so the duplicates are never uploaded to the GPU (~25 MB VRAM saved).
-        const byName = new Map(parts[0].map((p) => [p.material.name, p.material] as const));
-        for (const lodParts of parts.slice(1)) {
-            for (const p of lodParts) p.material = byName.get(p.material.name) ?? p.material;
-        }
-        const lib = new AvatarLibrary(skeleton!, parts);
-        await lib.prepareTeam(app, base);
-        return lib;
-    }
-
-    /** The GLBs embed the blue atlas; build the orange body material once (shared). */
-    private async prepareTeam(app: AppBase, base: string) {
-        const [atlas, emissive] = await Promise.all([
-            loadImage(`${base}courier_atlas_orange.png`),
-            loadImage(`${base}courier_emissive_orange.png`)
-        ]);
-        const make = (img: HTMLImageElement, like: Texture | null) => {
-            const t = new Texture(app.graphicsDevice, {
-                name: 'courier-orange',
-                width: img.width,
-                height: img.height,
-                format: like?.format,
-                mipmaps: true,
-                flipY: like?.flipY ?? false,
-                minFilter: like?.minFilter,
-                magFilter: like?.magFilter,
-                addressU: like?.addressU,
-                addressV: like?.addressV
-            });
-            t.setSource(img);
-            return t;
-        };
-        for (const lod of this.parts) {
-            for (const p of lod) {
-                const m = p.material as StandardMaterial;
-                if (this.teamMats.has(m) || !m.diffuseMap) continue;
-                const o = m.clone();
-                o.diffuseMap = make(atlas, m.diffuseMap);
-                if (m.emissiveMap) o.emissiveMap = make(emissive, m.emissiveMap);
-                o.update();
-                this.teamMats.set(m, o);
-            }
-        }
-    }
-
-    material(base: Material, team: TeamId): Material {
-        return team === 'orange' ? (this.teamMats.get(base) ?? base) : base;
-    }
-}
 
 const DOWN = new Vec3(0, -1, 0);
 
@@ -132,11 +31,17 @@ export class GlbAvatar implements AvatarView {
     private readonly lib: AvatarLibrary;
     private readonly bones = new Map<string, Entity>();
     private readonly restPos = new Map<string, Vec3>();
-    private readonly lods: MeshInstance[][] = [];
-    private readonly skins: SkinInstance[] = [];
+    /** Per LOD: [opaque, glass] mesh instances. */
+    private readonly lods: [MeshInstance, MeshInstance][] = [];
+    private readonly hasGlass: boolean[] = [];
+    private readonly held: (OutfitMeshes | null)[] = [];
+    private readonly skinInstance: SkinInstance;
     private readonly muzzleNode: Entity | null;
     private team: TeamId;
     private lod = -1;
+    private appearance: AvatarAppearance;
+    private wanted = '';
+    private destroyed = false;
 
     // Animation state (same model as the legacy CharacterRig, tuned for the new proportions).
     private phase = 0;
@@ -153,9 +58,10 @@ export class GlbAvatar implements AvatarView {
     private readonly tmpV = new Vec3();
     private readonly tmpV2 = new Vec3();
 
-    constructor(app: AppBase, lib: AvatarLibrary, team: TeamId) {
+    constructor(app: AppBase, lib: AvatarLibrary, team: TeamId, appearance: AvatarAppearance = DEFAULT_APPEARANCE) {
         this.lib = lib;
         this.team = team;
+        this.appearance = { ...appearance };
         this.root = new Entity('avatar');
         // Own copy of the skeleton (plain entities, no render components).
         const inst = lib.skeleton.clone() as Entity;
@@ -168,66 +74,99 @@ export class GlbAvatar implements AvatarView {
         walk(inst);
         this.muzzleNode = this.bones.get('muzzle') ?? null;
         const rootBone = this.bones.get('root') ?? inst;
-        // One skin instance (bone palette) per avatar, shared by every LOD/primitive whose skin
-        // has the same joint order (all LODs come from one armature). Others get their own.
-        const shared = new Map<string, SkinInstance>();
-        const skinFor = (mesh: Mesh) => {
-            const skin = mesh.skin!;
-            const key = skin.boneNames.join(',');
-            let si = shared.get(key);
-            if (!si) {
-                si = new SkinInstance(skin);
-                si.bones = skin.boneNames.map((n) => this.bones.get(n)!);
-                si.rootBone = rootBone;
-                shared.set(key, si);
-                this.skins.push(si);
-            }
-            return si;
-        };
-        lib.parts.forEach((parts, i) => {
-            const instances = parts.map((p) => {
-                const mi = new MeshInstance(p.mesh, lib.material(p.material, team));
-                mi.skinInstance = skinFor(p.mesh);
-                return mi;
-            });
-            const e = new Entity(`avatar-lod${i}`);
-            e.addComponent('render', { meshInstances: instances, castShadows: i === 0, receiveShadows: true });
-            this.root.addChild(e);
-            this.lods.push(instances);
+        this.skinInstance = new SkinInstance(lib.skin);
+        this.skinInstance.bones = lib.skin.boneNames.map((n) => {
+            const b = this.bones.get(n);
+            if (!b) throw new Error(`avatar skeleton is missing joint ${n}`);
+            return b;
         });
+        this.skinInstance.rootBone = rootBone;
+
+        // Start with the requested outfit if it is ready, else the always-ready default.
+        const exact = lib.acquire(this.appearance, 0) !== null;
+        if (exact) lib.release(`${appearanceKey(this.appearance)}#0`);
+        const start = exact ? this.appearance : DEFAULT_APPEARANCE;
+        for (let lod = 0; lod < LOD_COUNT; lod++) {
+            const om = lib.acquire(start, lod)!;
+            this.held.push(om);
+            const opaque = new MeshInstance(om.opaque, lib.bodyMaterial(team));
+            const glass = new MeshInstance(om.glass ?? om.opaque, lib.glass);
+            this.hasGlass.push(om.glass !== null);
+            for (const mi of [opaque, glass]) mi.skinInstance = this.skinInstance;
+            const e = new Entity(`avatar-lod${lod}`);
+            e.addComponent('render', { meshInstances: [opaque, glass], castShadows: lod === 0, receiveShadows: true });
+            this.root.addChild(e);
+            this.lods.push([opaque, glass]);
+        }
         app.root.addChild(this.root);
-        // The render component nulls skinInstance before destroying its mesh instances, so
-        // manually created skin instances (bone textures) must be released here.
+        // The render component nulls skinInstance before destroying its mesh instances, so the
+        // manually created skin instance (bone texture) is released here; outfits are un-held.
         this.root.once('destroy', () => {
-            for (const si of this.skins) si.destroy();
-            this.skins.length = 0;
+            this.destroyed = true;
+            this.skinInstance.destroy();
+            for (const h of this.held) if (h) this.lib.release(h.key);
+            this.held.length = 0;
         });
         this.setLod(0);
+        if (!exact) this.setAppearance(this.appearance);
     }
 
     get currentLod() {
         return this.lod;
     }
 
+    get currentAppearance(): AvatarAppearance {
+        return { ...this.appearance };
+    }
+
+    /** Triangles drawn at the current LOD (diagnostics). */
+    get triangles() {
+        return this.held[Math.max(0, this.lod)]?.triangles ?? 0;
+    }
+
     setLod(lod: number) {
         if (lod === this.lod) return;
         this.lod = lod;
-        this.lods.forEach((mis, i) => {
-            for (const mi of mis) {
-                mi.visible = i === lod;
-                mi.castShadow = i === 0 && lod === 0;
-            }
+        this.lods.forEach(([opaque, glass], i) => {
+            opaque.visible = i === lod;
+            glass.visible = i === lod && this.hasGlass[i];
+            opaque.castShadow = i === 0 && lod === 0;
+            glass.castShadow = false;
         });
     }
 
     setTeam(team: TeamId) {
         if (team === this.team) return;
         this.team = team;
-        this.lib.parts.forEach((parts, i) => {
-            parts.forEach((p, k) => {
-                this.lods[i][k].material = this.lib.material(p.material, team);
-            });
-        });
+        for (const [opaque] of this.lods) opaque.material = this.lib.bodyMaterial(team);
+    }
+
+    /**
+     * Change clothes. Loads/merges the outfit if needed (async), then swaps the meshes of the
+     * existing mesh instances in one frame. The latest request wins.
+     */
+    setAppearance(a: AvatarAppearance): Promise<void> {
+        const key = appearanceKey(a);
+        this.wanted = key;
+        return this.lib.prepare(a).then(
+            () => {
+                if (this.destroyed || this.wanted !== key) return;
+                const next = [0, 1, 2].map((lod) => this.lib.acquire(a, lod)!);
+                next.forEach((om, lod) => {
+                    const [opaque, glass] = this.lods[lod];
+                    opaque.mesh = om.opaque;
+                    if (om.glass) glass.mesh = om.glass;
+                    this.hasGlass[lod] = om.glass !== null;
+                });
+                for (const h of this.held) if (h) this.lib.release(h.key);
+                this.held.splice(0, this.held.length, ...next);
+                this.appearance = { ...a };
+                const lod = this.lod;
+                this.lod = -1;
+                this.setLod(lod);
+            },
+            (err: unknown) => console.warn('[avatar] outfit unavailable, keeping the current one:', err)
+        );
     }
 
     setVisible(v: boolean) {

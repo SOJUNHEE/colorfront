@@ -48,6 +48,7 @@ export class SettingsMenu {
     onClearPaint?: () => void;
     onBots?: (count: number) => void;
     onVictory?: () => void;
+    onWardrobe?: () => void;
 
     constructor(parent: HTMLElement, settings: GameSettings) {
         this.settings = { ...settings };
@@ -65,6 +66,7 @@ export class SettingsMenu {
                     <button class="play secondary" type="button" data-mode="offline">오프라인 연습 (로컬 봇)</button>
                 </div>
                 <button class="play" type="button" data-mode="continue"></button>
+                <button class="play secondary" type="button" data-action="wardrobe">아바타 꾸미기</button>
                 <div class="mode-row online-row hidden">
                     <button class="play secondary" type="button" data-action="ready">준비 [G]</button>
                     <button class="play secondary" type="button" data-action="leave">방 나가기</button>
@@ -182,6 +184,7 @@ export class SettingsMenu {
             const value = (e.target as HTMLElement).closest('button')?.dataset.value;
             if (value === 'blue' || value === 'orange') this.onTeam?.(value);
         });
+        this.root.querySelector('[data-action="wardrobe"]')!.addEventListener('click', () => this.onWardrobe?.());
         this.root.querySelector('[data-action="clear-paint"]')!.addEventListener('click', () => this.onClearPaint?.());
         this.root.querySelector('[data-action="victory"]')!.addEventListener('click', () => this.onVictory?.());
         this.root.querySelector('[data-dev="bots"]')!.addEventListener('click', (e) => {

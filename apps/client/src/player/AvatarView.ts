@@ -1,4 +1,5 @@
-import type { TeamId } from '@colorfront/shared';
+import { DEFAULT_APPEARANCE } from '@colorfront/shared';
+import type { AvatarAppearance, TeamId } from '@colorfront/shared';
 import { Entity } from 'playcanvas';
 import type { AppBase, Vec3 } from 'playcanvas';
 
@@ -29,6 +30,8 @@ export type AvatarView = {
     hit(): void;
     respawned(): void;
     celebrate(on: boolean): void;
+    /** Optional (GLB avatars): change clothes. Legacy rigs ignore it. */
+    setAppearance?(a: AvatarAppearance): Promise<void>;
 };
 
 export type AvatarKind = 'glb' | 'legacy';
@@ -50,12 +53,14 @@ export class SwitchableAvatar implements AvatarView {
     private team: TeamId;
     private celebrating = false;
     kind: AvatarKind;
+    appearance: AvatarAppearance;
 
-    constructor(root: Entity, first: AvatarView, kind: AvatarKind, team: TeamId) {
+    constructor(root: Entity, first: AvatarView, kind: AvatarKind, team: TeamId, appearance: AvatarAppearance) {
         this.root = root;
         this.inner = first;
         this.kind = kind;
         this.team = team;
+        this.appearance = { ...appearance };
         first.root.reparent(root);
     }
 
@@ -110,6 +115,17 @@ export class SwitchableAvatar implements AvatarView {
         this.celebrating = on;
         this.inner.celebrate(on);
     }
+
+    /** Remembered for a later legacy -> GLB upgrade; applied now if the view supports it. */
+    setAppearance(a: AvatarAppearance): Promise<void> {
+        this.appearance = { ...a };
+        return this.inner.setAppearance?.(a) ?? Promise.resolve();
+    }
+
+    /** The inner view (diagnostics / tests). */
+    get view(): AvatarView {
+        return this.inner;
+    }
 }
 
 export type AvatarFactoryStatus = 'legacy' | 'loading' | 'ready' | 'failed';
@@ -152,11 +168,11 @@ export class AvatarFactory {
         );
     }
 
-    create(team: TeamId, seed: number): AvatarView {
+    create(team: TeamId, seed: number, appearance: AvatarAppearance = DEFAULT_APPEARANCE): SwitchableAvatar {
         const root = new Entity('player-avatar');
         this.app.root.addChild(root);
-        const glb = this.lib ? this.makeGlb(team) : null;
-        const view = new SwitchableAvatar(root, glb ?? new CharacterRig(this.app, team, seed), glb ? 'glb' : 'legacy', team);
+        const glb = this.lib ? this.makeGlb(team, appearance) : null;
+        const view = new SwitchableAvatar(root, glb ?? new CharacterRig(this.app, team, seed), glb ? 'glb' : 'legacy', team, appearance);
         if (!glb) {
             this.live.add(view);
             // Forget it once the game destroys it (removed player, mode switch).
@@ -170,9 +186,14 @@ export class AvatarFactory {
         return this.live.size;
     }
 
-    private makeGlb(team: TeamId): AvatarView | null {
+    /** Loaded wardrobe library (null while loading / on failure / legacy mode). */
+    get library(): AvatarLibrary | null {
+        return this.lib;
+    }
+
+    private makeGlb(team: TeamId, appearance: AvatarAppearance): AvatarView | null {
         try {
-            return new GlbAvatar(this.app, this.lib!, team);
+            return new GlbAvatar(this.app, this.lib!, team, appearance);
         } catch (err) {
             console.warn('[avatar] GLB avatar creation failed, using the legacy rig:', err);
             return null;
@@ -181,7 +202,7 @@ export class AvatarFactory {
 
     private upgrade(view: SwitchableAvatar) {
         this.live.delete(view);
-        const glb = this.makeGlb('blue');
+        const glb = this.makeGlb('blue', view.appearance);
         if (glb) view.swap(glb, 'glb');
     }
 }

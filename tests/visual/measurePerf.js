@@ -31,6 +31,9 @@ async (page) => {
         blob(8, 0, -4, 'orange', 40, 6);
         blob(-40, 0, 2, 'blue', 30, 8);
         if (mode === 'bots' && g.debugSpawnBots) g.debugSpawnBots(29);
+        // Phase 6 Gate 3: bots wear random outfits; measure only once every outfit is on.
+        for (let i = 0; i < 200 && g.debugAvatars && g.debugAvatars.outfitPending > 0; i++) await new Promise((r) => setTimeout(r, 50));
+        const outfitsPendingAtStart = g.debugAvatars ? g.debugAvatars.outfitPending : null;
 
         const s = g.debugState;
         s.position.x = -28; s.position.y = 0; s.position.z = 4; g.copyPrevious();
@@ -66,6 +69,7 @@ async (page) => {
                 vramMB: vram()
             };
         }
+        out.outfitsPendingAtStart = outfitsPendingAtStart;
         out.jsHeapMB = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null;
         out.renderer = (() => { const e = gl.getExtension('WEBGL_debug_renderer_info'); return e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : 'n/a'; })();
         return out;

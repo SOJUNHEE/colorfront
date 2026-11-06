@@ -1,3 +1,4 @@
+export * from './avatar/appearance.ts';
 export * from './bots/simpleBot.ts';
 export * from './combat/hitscan.ts';
 export * from './constants/simulation.ts';

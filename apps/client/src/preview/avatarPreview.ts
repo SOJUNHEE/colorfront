@@ -4,6 +4,7 @@
  * Drives every avatar with the same RigPose stream for the 12 gameplay states, so skinning,
  * IK, tank level, team swap and LODs can be checked side by side. Automation: window.__preview.
  */
+import { DEFAULT_APPEARANCE } from '@colorfront/shared';
 import {
     AppBase,
     AppOptions,
@@ -221,7 +222,7 @@ async function main() {
         pose = v as PoseName;
         clock = 0;
     });
-    const stats = lib.parts.map((p) => p.reduce((n, x) => n + (x.mesh.primitive[0].count ?? 0) / 3, 0));
+    const stats = lib.triangles(DEFAULT_APPEARANCE);
     status.textContent = `GLB 로드 ${loadMs} ms · 삼각형 LOD0/1/2 = ${stats.join(' / ')}`;
 
     // Automation hooks (Playwright captures).

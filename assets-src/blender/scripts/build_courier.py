@@ -88,6 +88,7 @@ CELLS = [
     ('white', '#FFFFFF', 0.4, 0.0, 0),
     ('under', '#3E4A61', 0.8, 0.0, 0),
     ('glass', '#DCE8F2', 0.05, 0.0, 0),
+    ('hair_brown', '#7A5038', 0.36, 0.0, 0),
 ]
 CELL_INDEX = {c[0]: i for i, c in enumerate(CELLS)}
 EMBLEM = (6, 6)  # first cell (col,row) of the 2x2 emblem block
@@ -770,8 +771,8 @@ def join(objs, name):
 # ── character parts ──────────────────────────────────────────────────────────────────────────────
 # Per-LOD triangle targets (see 01_AUDIT.md: LOD0 5-8k, LOD1 1.8-3k, LOD2 0.5-1.2k per avatar).
 BUDGET = {
-    'head': (680, 260, 100), 'hair_cap': (360, 116, 52), 'lock': (122, 42, 26),
-    'jacket': (790, 250, 110), 'pants': (620, 230, 90), 'shoe_upper': (150, 60, 24),
+    'head': (620, 210, 90), 'hair_cap': (340, 110, 50), 'lock': (114, 33, 24),
+    'jacket': (700, 230, 100), 'pants': (620, 230, 90), 'shoe_upper': (150, 60, 24),
     'sole': (80, 36, 12), 'glove': (120, 44, 18),
 }
 
@@ -1051,7 +1052,7 @@ def build_shoes(d):
         sole = dec_to(sole, B('sole', d))
         parts.append(finish(sole, 'sole', sharp=45))
         if d == 0:
-            collar = torus('shoecollar', (cx, 0.132, 0.03), 0.06, 0.064, 0.017, segs=L(d, (12, 4), (8, 3)))
+            collar = torus('shoecollar', (cx, 0.132, 0.03), 0.06, 0.064, 0.017, segs=L(d, (10, 3), (8, 3)))
             parts.append(finish(collar, 'rubber'))
         if d == 0:
             for i in range(2):
@@ -1144,10 +1145,10 @@ def build_gun(d):
         g = join(parts, 'gun_part')
         rigid_weights(g, 'gun')
         return g
-    parts.append(finish(rbox('grip', G(0, -0.075, 0.0), (0.04, 0.1, 0.045), bevel=0.6, segs=1,
+    parts.append(finish(rbox('grip', G(0, -0.075, 0.0), (0.04, 0.1, 0.045), bevel=L(d, 0.6, 0), segs=1,
                              taper=lambda x, y, z: (x, y, z + y * 0.35)), 'rubber', sharp=50))
-    parts.append(finish(rbox('fgrip', G(0, -0.065, -0.3), (0.036, 0.075, 0.04), bevel=0.6, segs=1), 'rubber', sharp=50))
-    parts.append(finish(rbox('stock', G(0, -0.01, 0.07), (0.05, 0.075, 0.14), bevel=0.6, segs=1,
+    parts.append(finish(rbox('fgrip', G(0, -0.065, -0.3), (0.036, 0.075, 0.04), bevel=L(d, 0.6, 0), segs=1), 'rubber', sharp=50))
+    parts.append(finish(rbox('stock', G(0, -0.01, 0.07), (0.05, 0.075, 0.14), bevel=L(d, 0.6, 0), segs=1,
                              taper=lambda x, y, z: (x, y - z * 0.25, z)), 'ivory', sharp=40))
     g = join(parts, 'gun_part')
     rigid_weights(g, 'gun')
@@ -1189,9 +1190,387 @@ def build_base_body(d):
     return body
 
 
+# ── wardrobe items (Gate 3) ──────────────────────────────────────────────────────────────────────
+# Every item is exported per LOD as <id>_lod<d>.glb on the same 22-bone skeleton. Mesh/object names
+# inside a GLB are the runtime contract (Blender may append .001 for duplicates; the runtime strips
+# it): the base body is split into regions an item can hide, hair ships a `hair_capped` variant
+# worn under headwear. See apps/client/src/avatar/catalog.ts.
+
+BASE_REGIONS = ('torso', 'upperarms', 'forearms', 'hips', 'thighs', 'knees', 'shins')
+
+
+def arm_t(p, sx):
+    """Distance along the (A-pose) arm from the shoulder joint, runtime point p, side sign sx."""
+    return (p[0] - sx * 0.17) * sx * math.sin(ARM_ANGLE) + (p[1] - 1.10) * (-math.cos(ARM_ANGLE))
+
+
+def arm_side(p):
+    for sx, (co, no) in zip((-1, 1), SLEEVE_PLANES):
+        if (p[0] - co[0]) * no[0] + (p[1] - co[1]) * no[1] > 0:
+            return sx
+    return 0
+
+
+def region_of(p):
+    sx = arm_side(p)
+    if sx:
+        return 'upperarms' if arm_t(p, sx) < 0.24 else 'forearms'
+    y = p[1]
+    if y >= 0.82:
+        return 'torso'
+    if y >= 0.62:
+        return 'hips'
+    if y >= 0.5:
+        return 'thighs'
+    if y >= 0.3:
+        return 'knees'
+    return 'shins'
+
+
+def elbow_planes(filt):
+    out = []
+    for side, sx in (('L', -1), ('R', 1)):
+        out.append(((*arm_point(side, 0.24), 0), (sx * math.sin(ARM_ANGLE), -math.cos(ARM_ANGLE), 0), filt))
+    return out
+
+
+def split_by(obj, key, names, prefix):
+    """Split a weighted mesh into one object per region (faces assigned by centroid)."""
+    out = {}
+    for r in names:
+        c = obj.copy()
+        c.data = obj.data.copy()
+        COLL.objects.link(c)
+        bm = bmesh.new()
+        bm.from_mesh(c.data)
+        kill = [f for f in bm.faces if key(to_runtime(f.calc_center_median())) != r]
+        bmesh.ops.delete(bm, geom=kill, context='FACES')
+        loose = [v for v in bm.verts if not v.link_faces]
+        bmesh.ops.delete(bm, geom=loose, context='VERTS')
+        bm.to_mesh(c.data)
+        bm.free()
+        if len(c.data.polygons) == 0:
+            bpy.data.objects.remove(c)
+            continue
+        c.name = f'{prefix}{r}'
+        out[r] = c
+    bpy.data.objects.remove(obj)
+    return out
+
+
+def build_base_regions(d):
+    """Base body split into hideable regions + always-visible head and hands + feet."""
+    nodes = [
+        ((0, 0.74, 0.0), (0.128, 0.094)),
+        ((0, 0.86, 0.0), (0.112, 0.085)),
+        ((0, 0.99, 0.0), (0.135, 0.098)),
+        ((0, 1.08, 0.0), (0.122, 0.09)),
+        ((0, 1.14, 0.0), (0.05, 0.048)),
+    ]
+    edges = [(0, 1), (1, 2), (2, 3), (3, 4)]
+    for side in ('L', 'R'):
+        sx = -1 if side == 'L' else 1
+        b = len(nodes)
+        e = arm_point(side, 0.24)
+        nodes += [((sx * 0.16, 1.09, 0), (0.058, 0.058)), ((e[0], e[1], 0), (0.044, 0.044)),
+                  ((*arm_point(side, 0.45), 0), (0.037, 0.037))]
+        edges += [(3, b), (b, b + 1), (b + 1, b + 2)]
+        c = len(nodes)
+        nodes += [((sx * 0.085, 0.66, 0), (0.074, 0.074)), ((sx * 0.092, 0.5, 0), (0.064, 0.064)),
+                  ((sx * 0.094, 0.37, 0), (0.054, 0.054)), ((sx * 0.097, 0.1, 0), (0.044, 0.044))]
+        edges += [(0, c), (c, c + 1), (c + 1, c + 2), (c + 2, c + 3)]
+    body = skin_body('base_body', nodes, edges, root=2, subdiv=2)
+    body = dec_to(body, L(d, 940, 330, 130), symmetric=True)
+    shoulder = lambda p: p[1] > 0.9 and 0.08 < abs(p[0]) < 0.26  # noqa: E731
+    arms = lambda p: arm_side(p) != 0  # noqa: E731
+    legs = lambda p: abs(p[0]) < 0.25  # noqa: E731
+    cut(body, [(co, no, shoulder) for co, no in SLEEVE_PLANES] + elbow_planes(arms) +
+        [((0, y, 0), (0, 1, 0), legs) for y in (0.82, 0.62, 0.5, 0.3)])
+
+    def rule(p, n, poly):
+        r = region_of(p)
+        return 'under' if r in ('torso', 'hips', 'thighs') else 'skin'
+    finish(body, rule=rule)
+    heat_weights(body, ARM_REF, SKEL)
+    regions = split_by(body, region_of, BASE_REGIONS, 'base_')
+    head = build_head(d)
+    head.name = 'base_head'
+    hands = build_gloves(d)
+    hands.name = 'base_hands'
+    feet = []
+    for side in ('L', 'R'):
+        sx = -1 if side == 'L' else 1
+        f = rbox('foot', (sx * 0.1, 0.035, -0.035), (0.085, 0.07, 0.2), bevel=0.9, segs=L(d, 2, 1, 1))
+        finish(f, 'under')
+        rigid_weights(f, 'foot' + side)
+        feet.append(f)
+    feet = join(feet, 'base_feet')
+    out = dict(regions)
+    out['head'] = head
+    out['hands'] = hands
+    out['feet'] = feet
+    return out
+
+
+def hair_shell(d, color, front=1.49, top_cut=None, scale=1.07, back=1.31):
+    """Closed hair volume around the skull. Vertices outside the hair area are sunk under the
+    scalp (not deleted), so the hairline is the smooth intersection with the head surface."""
+    centre = Vector((HEAD_C[0], HEAD_C[1] + 0.012, HEAD_C[2] + 0.004))
+    cap = ellipsoid('hair_cap', tuple(centre), (HEAD_R[0] * scale, HEAD_R[1] * scale, HEAD_R[2] * (scale + 0.005)), (36, 20))
+    for v in cap.data.vertices:
+        x, y, z = to_runtime(v.co)
+        t = (1 - math.cos(math.atan2(x, -(z - centre.z)))) / 2  # 0 front .. 1 back
+        hairline = front + (back - front) * t ** 1.3
+        s = min(1.0, max(0.0, (y - hairline) / 0.035))
+        if top_cut is not None:
+            s = min(s, min(1.0, max(0.0, (top_cut - y) / 0.03)))
+        k = (0.78 + (1.0 - 0.78) * s)
+        v.co = R(centre.x + (x - centre.x) * k, centre.y + (y - centre.y) * k, centre.z + (z - centre.z) * k)
+    cap = dec_to(cap, B('hair_cap', d) if top_cut is None else B('hair_cap', d) // 2, symmetric=True)
+    return finish(cap, color)
+
+
+SIDEPART_LOCKS = None  # filled lazily from build_hair's table (kept in one place)
+
+
+def sidepart_locks():
+    return [
+        ([(-0.05, 1.63, -0.02), (0.02, 1.635, -0.135), (0.125, 1.585, -0.205), (0.215, 1.49, -0.155), (0.235, 1.41, -0.075)],
+         [0.078, 0.072, 0.06, 0.036, 0.008]),
+        ([(-0.02, 1.635, -0.04), (-0.105, 1.61, -0.16), (-0.183, 1.53, -0.163), (-0.214, 1.465, -0.105)],
+         [0.062, 0.056, 0.038, 0.008]),
+        ([(0.01, 1.64, 0.0), (-0.02, 1.71, 0.03), (-0.075, 1.735, 0.085), (-0.12, 1.715, 0.12)],
+         [0.05, 0.042, 0.028, 0.006]),
+        ([(0.145, 1.61, -0.02), (0.207, 1.54, 0.0), (0.226, 1.45, 0.025), (0.213, 1.38, 0.04)],
+         [0.05, 0.046, 0.032, 0.007]),
+        ([(-0.145, 1.61, 0.0), (-0.207, 1.55, 0.02), (-0.222, 1.475, 0.04)],
+         [0.048, 0.04, 0.008]),
+        ([(-0.07, 1.61, 0.1), (-0.125, 1.51, 0.197), (-0.12, 1.39, 0.207), (-0.09, 1.31, 0.177)],
+         [0.065, 0.062, 0.045, 0.01]),
+        ([(0.02, 1.62, 0.11), (0.02, 1.51, 0.217), (0.0, 1.38, 0.222), (-0.01, 1.29, 0.187)],
+         [0.07, 0.066, 0.048, 0.01]),
+        ([(0.1, 1.61, 0.09), (0.155, 1.51, 0.177), (0.155, 1.4, 0.177), (0.125, 1.32, 0.147)],
+         [0.06, 0.058, 0.04, 0.009]),
+    ]
+
+
+def build_hair_sidepart_capped(d):
+    """Side-swoop worn under a cap: no crown shell/top waves; side + back volume stay."""
+    parts = [hair_shell(d, 'hair', top_cut=1.515, back=1.38)]
+    locks = sidepart_locks()
+    keep = [3, 4, 5, 6, 7] if d < 2 else [6]
+    for i in keep:
+        pts, rad = locks[i]
+        t = tube(f'clock{i}', pts, rad, res=8, sides=3)
+        t = dec_to(t, B('lock', d))
+        parts.append(finish(t, 'hair'))
+    h = join(parts, 'hair_capped')
+    rigid_weights(h, 'head')
+    return h
+
+
+def build_hair_crew(d, capped=False):
+    """Original short crew cut in brown: rounded crown with tufts and an up-flicked fringe."""
+    parts = [hair_shell(d, 'hair_brown', front=1.505, top_cut=1.515 if capped else None, scale=1.06, back=1.3)]
+    if not capped:
+        tufts = [(-0.08, 1.6, -0.06), (0.06, 1.61, -0.05), (-0.02, 1.625, 0.03), (0.1, 1.585, 0.06), (-0.11, 1.58, 0.07),
+                 (0.02, 1.6, 0.12)]
+        for i, c in enumerate(tufts[: L(d, 6, 3, 0)]):
+            parts.append(finish(ellipsoid(f'tuft{i}', c, (0.06, 0.034, 0.055), L(d, (8, 5), (6, 4))), 'hair_brown'))
+        for i, x in enumerate((-0.09, -0.03, 0.03, 0.09)[: L(d, 4, 2, 0)]):
+            pts = [(x, 1.555, -0.188 + 0.15 * x * x), (x * 1.04, 1.6, -0.212), (x * 1.08 + 0.025, 1.645, -0.19)]
+            t = tube(f'fringe{i}', pts, [0.034, 0.028, 0.005], res=L(d, 4, 2), sides=1)
+            parts.append(finish(t, 'hair_brown'))
+    h = join(parts, 'hair_capped' if capped else 'hair')
+    rigid_weights(h, 'head')
+    return h
+
+
+def build_cap(d):
+    """Original COLORFRONT cap: team crown, ivory front panel, brim angled ~28 deg to the right."""
+    crown = ellipsoid('cap_crown', (0, 1.43, -0.005), (0.229, 0.218, 0.214), L(d, (28, 14), (12, 7), (8, 5)))
+    bm = bmesh.new()
+    bm.from_mesh(crown.data)
+    kill = [v for v in bm.verts if to_runtime(v.co)[1] < 1.505 - 0.09 * max(0.0, to_runtime(v.co)[2])]
+    bmesh.ops.delete(bm, geom=kill, context='VERTS')
+    bm.to_mesh(crown.data)
+    bm.free()
+    sol = crown.modifiers.new('sol', 'SOLIDIFY')
+    sol.thickness = 0.012
+    sol.offset = 1
+    crown = bake(crown)
+    if d == 0:
+        front = lambda p: p[2] < -0.05  # noqa: E731
+        cut(crown, [((0.085, 0, 0), (1, 0, 0), front), ((-0.085, 0, 0), (1, 0, 0), front)])
+    finish(crown, rule=lambda p, n, poly: 'ivory' if d == 0 and p[2] < -0.1 and abs(p[0]) < 0.085 and p[1] > 1.52 else 'team')
+    parts = [crown]
+    ang = math.radians(28)
+
+    def brim_shape(x, y, z):
+        y = y - 2.2 * x * x - 1.2 * z * z  # curved brim
+        xr = x * math.cos(ang) - z * math.sin(ang)
+        zr = x * math.sin(ang) + z * math.cos(ang)
+        return xr, y, zr
+    brim = rbox('brim', (0, 1.512, -0.2), (0.2, 0.014, 0.15), bevel=L(d, 0.8, 0.6, 0), segs=L(d, 2, 1, 1), taper=None)
+    # Rotate/curve the brim around the crown front (runtime space).
+    for v in brim.data.vertices:
+        x, y, z = to_runtime(v.co)
+        lx, ly, lz = brim_shape(x, y - 1.512, z + 0.2)
+        v.co = R(lx, 1.512 + ly, lz - 0.2 + 0.0)
+    # push the curved, rotated brim out so it starts at the crown edge
+    for v in brim.data.vertices:
+        x, y, z = to_runtime(v.co)
+        v.co = R(x + 0.05, y, z - 0.03)
+    parts.append(finish(brim, 'graphite_l', sharp=50))
+    if d < 2:
+        parts.append(finish(ellipsoid('cap_button', (0, 1.648, -0.005), (0.022, 0.012, 0.022), (10, 6)), 'team_d'))
+        parts.append(finish(rbox('cap_tab', (-0.16, 1.55, 0.13), (0.012, 0.05, 0.05), bevel=0.4, segs=1), 'ivory'))
+    c = join(parts, 'headwear_cap')
+    rigid_weights(c, 'head')
+    return c
+
+
+def hardshell_rule(p, n, poly):
+    x, y, z = p
+    sx = arm_side(p)
+    if sx:
+        t = arm_t(p, sx)
+        return 'ivory' if 0.1 < t < 0.14 else 'graphite_l'
+    if y < 0.735:
+        return 'team_d'
+    if z < 0 and abs(x) < 0.014:
+        return 'ivory'  # centre zip
+    if y > 1.06:
+        return 'team_d'
+    return 'team'
+
+
+def build_hardshell(d):
+    """Longer A-line shell jacket: team body, graphite sleeves with reflective bands, funnel
+    collar and a rolled hood at the nape (different silhouette from the bomber)."""
+    nodes = [
+        ((0, 0.70, 0.0), (0.166, 0.128)),   # A-line hem
+        ((0, 0.79, 0.0), (0.152, 0.117)),
+        ((0, 0.88, 0.0), (0.138, 0.106)),
+        ((0, 0.99, 0.0), (0.16, 0.12)),
+        ((0, 1.075, 0.0), (0.145, 0.11)),
+        ((0, 1.14, 0.0), (0.082, 0.072)),
+    ]
+    edges = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]
+    for side in ('L', 'R'):
+        sx = -1 if side == 'L' else 1
+        b = len(nodes)
+        e = arm_point(side, 0.24)
+        nodes += [((sx * 0.165, 1.09, 0.0), (0.076, 0.076)), ((*arm_point(side, 0.12), 0.0), (0.072, 0.072)),
+                  ((e[0], e[1], 0.0), (0.064, 0.064)), ((*arm_point(side, 0.36), 0.0), (0.062, 0.062)),
+                  ((*arm_point(side, 0.445), 0.0), (0.058, 0.058))]
+        edges += [(4, b), (b, b + 1), (b + 1, b + 2), (b + 2, b + 3), (b + 3, b + 4)]
+    hull = skin_body('hardshell', nodes, edges, root=3, subdiv=2)
+    hull = dec_to(hull, B('jacket', d), symmetric=True)
+    torso = lambda p: abs(p[0]) < 0.19  # noqa: E731
+    front = lambda p: p[2] < 0.02 and abs(p[0]) < 0.06 and p[1] < 1.12  # noqa: E731
+    arms = lambda p: arm_side(p) != 0  # noqa: E731
+    planes = [(co, no, lambda p: p[1] > 0.9 and 0.08 < abs(p[0]) < 0.26) for co, no in SLEEVE_PLANES]
+    planes += [((0, 0.735, 0), (0, 1, 0), torso), ((0, 1.06, 0), (0, 1, 0), torso),
+               ((0.014, 0, 0), (1, 0, 0), front), ((-0.014, 0, 0), (1, 0, 0), front)]
+    if d == 0:
+        for side, sx in (('L', -1), ('R', 1)):
+            for t in (0.1, 0.14):
+                planes.append(((*arm_point(side, t), 0), (sx * math.sin(ARM_ANGLE), -math.cos(ARM_ANGLE), 0), arms))
+    cut(hull, planes)
+    finish(hull, rule=hardshell_rule)
+    heat_weights(hull, ARM_REF, SKEL)
+    acc = []
+    if d < 2:
+        funnel = cylinder('funnel', (0, 1.105, 0.004), (0, 1.215, 0.0), 0.096, 0.088, segs=L(d, 18, 10), caps=False)
+        sol = funnel.modifiers.new('sol', 'SOLIDIFY')
+        sol.thickness = 0.014
+        funnel = bake(funnel)
+        acc.append(finish(funnel, 'team_d'))
+        if d == 0:
+            acc.append(finish(ellipsoid('hood', (0, 1.16, 0.1), (0.118, 0.055, 0.05), (12, 6)), 'team_d'))
+        for side in ('L', 'R'):
+            w = arm_point(side, 0.45)
+            sx = -1 if side == 'L' else 1
+            acc.append(finish(torus('cuff', (w[0], w[1], 0), 0.054, 0.054, 0.016,
+                                    axis=(sx * math.sin(ARM_ANGLE), -math.cos(ARM_ANGLE), 0), segs=L(d, (14, 5), (8, 4))), 'rubber'))
+    if d == 0:
+        acc.append(finish(rbox('chestpocket', (0.07, 0.985, -0.123), (0.07, 0.07, 0.018), bevel=0.6, segs=1), 'team_d', sharp=50))
+    for a in acc:
+        transfer_weights(hull, a)
+    return join([hull] + acc, 'top_hardshell')
+
+
+def build_shorts(d):
+    nodes = [((0, 0.83, 0.0), (0.136, 0.106)), ((0, 0.72, 0.0), (0.14, 0.106))]
+    edges = [(0, 1)]
+    for side in ('L', 'R'):
+        sx = -1 if side == 'L' else 1
+        b = len(nodes)
+        nodes += [((sx * 0.088, 0.64, 0.0), (0.092, 0.092)), ((sx * 0.094, 0.53, 0.0), (0.089, 0.089)),
+                  ((sx * 0.096, 0.42, 0.0), (0.087, 0.087))]
+        edges += [(1, b), (b, b + 1), (b + 1, b + 2)]
+    hull = skin_body('shorts', nodes, edges, root=1, subdiv=2)
+    hull = dec_to(hull, L(d, 440, 160, 70), symmetric=True)
+    cut(hull, [((0, 0.5, 0), (0, 1, 0), None), ((0, 0.47, 0), (0, 1, 0), None)])
+    bm = bmesh.new()
+    bm.from_mesh(hull.data)
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if to_runtime(f.calc_center_median())[1] < 0.47], context='FACES')
+    bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context='VERTS')
+    bm.to_mesh(hull.data)
+    bm.free()
+    finish(hull, rule=lambda p, n, poly: 'team' if p[1] < 0.5 else 'slate')
+    heat_weights(hull, ARM_REF, SKEL)
+    acc = []
+    for sx in (-1, 1):
+        acc.append(finish(torus('hem', (sx * 0.095, 0.472, 0), 0.09, 0.09, 0.012, segs=L(d, (18, 4), (8, 3), (6, 3))), 'team'))
+    if d == 0:
+        for sx in (-1, 1):
+            acc.append(finish(rbox('spocket', (sx * 0.18, 0.62, 0.0), (0.03, 0.08, 0.085), bevel=0.6, segs=1), 'slate_d', sharp=50))
+    for a in acc:
+        transfer_weights(hull, a)
+    return join([hull] + acc, 'bottom_short')
+
+
+def build_wardrobe(d):
+    """All wardrobe GLB contents for LOD d: {glb name: [objects]} (object names = runtime names)."""
+    base = build_base_regions(d)
+    for k, o in base.items():
+        o.name = f'base_{k}'
+    out = {'courier_base': list(base.values())}
+
+    def named(obj, name):
+        obj.name = name
+        return obj
+    out['top_bomber'] = [named(build_jacket(d), 'top')]
+    out['top_hardshell'] = [named(build_hardshell(d), 'top')]
+    out['bottom_cargo'] = [named(build_pants(d), 'bottom')]
+    out['bottom_short'] = [named(build_shorts(d), 'bottom')]
+    out['shoes_runner'] = [named(build_shoes(d), 'shoes')]
+    out['hair_sidepart'] = [named(build_hair(d), 'hair'), named(build_hair_sidepart_capped(d), 'hair_capped')]
+    out['hair_crew'] = [named(build_hair_crew(d), 'hair'), named(build_hair_crew(d, capped=True), 'hair_capped')]
+    out['headwear_cap'] = [named(build_cap(d), 'headwear')]
+    out['back_tank_standard'] = [named(build_tank(d), 'back')]
+    out['paint_rifle'] = [named(build_gun(d), 'weapon')]
+    for objs in out.values():
+        for o in objs:
+            limit_normalize(o)
+    return out
+
+
+WARDROBE_FOLDER = {'courier_base': 'characters', 'paint_rifle': 'weapons'}
+
+
 # ── scene / build ────────────────────────────────────────────────────────────────────────────────
 def tri_count(obj):
     return tris(obj)
+
+
+def new_collection(name):
+    global COLL
+    COLL = bpy.data.collections.new(name)
+    bpy.context.scene.collection.children.link(COLL)
+    return COLL
 
 
 def build_lod(d, arm, S, body_mat, glass_mat, items=None):
@@ -1260,7 +1639,7 @@ def add_muzzle(arm):
     return e
 
 
-def export_glb(path, objs):
+def export_glb(path, objs, images=True):
     select_only(objs, objs[0])
     props = bpy.ops.export_scene.gltf.get_rna_type().properties.keys()
     kw = dict(filepath=path, export_format='GLB', use_selection=True, export_yup=True, export_apply=False,
@@ -1270,7 +1649,8 @@ def export_glb(path, objs):
         if k in props:
             kw[k] = False
     if 'export_image_format' in props:
-        kw['export_image_format'] = 'AUTO'
+        # Wardrobe items reuse the atlas embedded in courier_base_lod0.glb: no duplicate images.
+        kw['export_image_format'] = 'AUTO' if images else 'NONE'
     if 'export_vertex_color' in props:
         kw['export_vertex_color'] = 'NONE'
     elif 'export_colors' in props:
@@ -1402,23 +1782,38 @@ def main():
     body_mat, glass_mat = make_materials(paths)
     MATS[:] = [body_mat, glass_mat]
     arm, S, order = build_armature()
-    report = {'lods': {}, 'items': {}, 'heat_fallback_vertices': {}}
+    report = {'lods': {}, 'wardrobe': {}, 'heat_fallback_vertices': {}}
     items = {}
     lods = []
+    wardrobe = {}
     for d in (0, 1, 2):
-        full, stats, fixed = build_lod(d, arm, S, body_mat, glass_mat, items if d == 0 else None)
+        full, stats, fixed = build_lod(d, arm, S, body_mat, glass_mat, None)
         lods.append(full)
         report['lods'][d] = stats['default']
         report['parts'] = report.get('parts', {}); report['parts'][d] = stats['parts']
-        if d == 0:
-            report['items'] = {k: v for k, v in stats.items() if k != 'default'}
+        new_collection(f'WARDROBE_LOD{d}')
+        wardrobe[d] = build_wardrobe(d)
+        report['wardrobe'][d] = {k: sum(tris(o) for o in v) for k, v in wardrobe[d].items()}
     straighten_bones(arm)
     muzzle = add_muzzle(arm)
+    # Remove item GLBs from older layouts (unsuffixed names) before writing the per-LOD set.
+    for folder in (OUT_CLOTH, OUT_WEAP, OUT_CHAR):
+        for f in os.listdir(folder):
+            if f.endswith('.glb') and not f.startswith('courier_default_'):
+                os.remove(os.path.join(folder, f))
     for d, full in enumerate(lods):
         export_glb(os.path.join(OUT_CHAR, f'courier_default_lod{d}.glb'), [arm, full, muzzle])
-    for name, (folder, obj) in items.items():
-        extra = [muzzle] if name == 'paint_rifle' else []
-        export_glb(os.path.join(folder, f'{name}.glb'), [arm, obj] + extra)
+    for d, w in wardrobe.items():
+        for name, objs in w.items():
+            for o in objs:
+                attach(o, arm)
+            folder = os.path.join(PUB, WARDROBE_FOLDER.get(name, 'clothes'))
+            extra = [muzzle] if name == 'paint_rifle' else []
+            export_glb(os.path.join(folder, f'{name}_lod{d}.glb'), [arm] + objs + extra,
+                       images=(name == 'courier_base' and d == 0))
+            for o in objs:
+                o.hide_set(True)
+                o.hide_render = True
     # Runtime team swap textures (orange atlas + emissive) next to the GLBs.
     import shutil
     for kind in ('atlas', 'emissive'):
@@ -1464,6 +1859,34 @@ def main():
             shots.append(p)
         pose(arm, {})
         save_sheet(shots, os.path.join(RENDERS, 'pose_test.png'), 3)
+        # Gate 3: wardrobe combinations (LOD0), base regions hidden like the runtime does.
+        hide = {'top_bomber': ('torso', 'upperarms', 'forearms'), 'top_hardshell': ('torso', 'upperarms', 'forearms'),
+                'bottom_cargo': ('hips', 'thighs', 'knees', 'shins'), 'bottom_short': ('hips', 'thighs'),
+                'shoes_runner': ('feet',)}
+        combos = [('top_bomber', 'bottom_cargo', 'hair_sidepart', None), ('top_hardshell', 'bottom_short', 'hair_crew', None),
+                  ('top_bomber', 'bottom_short', 'hair_sidepart', 'headwear_cap'),
+                  ('top_hardshell', 'bottom_cargo', 'hair_crew', 'headwear_cap')]
+        w = wardrobe[0]
+        out = []
+        for combo in combos:
+            top, bottom, hair, hat = combo
+            hidden = set(hide[top]) | set(hide[bottom]) | set(hide['shoes_runner'])
+            show = [o for o in w['courier_base'] if o.name.split('.')[0][5:] not in hidden]
+            show += w[top] + w[bottom] + w['shoes_runner'] + w['back_tank_standard'] + w['paint_rifle']
+            want_hair = 'hair_capped' if hat else 'hair'
+            show += [o for o in w[hair] if o.name.split('.')[0] == want_hair]
+            if hat:
+                show += w[hat]
+            for o in bpy.context.scene.objects:
+                if o.type == 'MESH' and o.name != 'ground':
+                    o.hide_render = o not in show
+            for view, pos in (('front', (1.8, 5.0, 1.0)), ('back', (-2.2, -4.8, 1.1))):
+                look(cam, pos, (0, 0, 0.84))
+                pth = os.path.join(RENDERS, f'wardrobe_{top}_{bottom}_{hair}_{hat or "nohat"}_{view}.png')
+                bpy.context.scene.render.filepath = pth
+                bpy.ops.render.render(write_still=True)
+                out.append(pth)
+        save_sheet(out, os.path.join(RENDERS, 'wardrobe_combos.png'), 4)
 
 
 main()

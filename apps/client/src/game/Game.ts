@@ -1,4 +1,5 @@
 import {
+    DEFAULT_APPEARANCE,
     FixedStepper,
     InputButton,
     MATCH_START,
@@ -8,12 +9,14 @@ import {
     TICK_RATE,
     WEAPONS,
     paintSpeedMultiplier,
+    randomAppearance,
     reloadTicks,
     sanitizeInput,
     unpackShot,
     unpackVec
 } from '@colorfront/shared';
 import type {
+    AvatarAppearance,
     MapDefinition,
     MatchEvent,
     NetEvent,
@@ -28,6 +31,7 @@ import type {
 import { Entity, Vec3 as PcVec3 } from 'playcanvas';
 import type { AppBase } from 'playcanvas';
 
+import { loadAppearance, saveAppearance, seededRandom } from '../avatar/appearanceStore.ts';
 import { OnlineSession, defaultServerUrl } from '../network/OnlineSession.ts';
 import type { NetActor } from '../network/OnlineSession.ts';
 import { PaintEffects } from '../paint/PaintEffects.ts';
@@ -44,6 +48,7 @@ import type { GameSettings, GraphicsQuality } from '../settings/settings.ts';
 import { Hud } from '../ui/Hud.ts';
 import { MatchPanel } from '../ui/MatchPanel.ts';
 import { SettingsMenu } from '../ui/SettingsMenu.ts';
+import { WardrobePanel } from '../ui/WardrobePanel.ts';
 
 import { InputManager } from './InputManager.ts';
 
@@ -90,6 +95,11 @@ export class Game {
     private readonly effects: PaintEffects;
     /** Player views: legacy rig until the GLB avatars are loaded, then upgraded in place. */
     private readonly avatars: AvatarFactory;
+    /** Local player's saved outfit (this device). */
+    private appearance: AvatarAppearance = loadAppearance();
+    private readonly wardrobe: WardrobePanel;
+    /** Showcase camera while the wardrobe is open: orbit around the local player. */
+    private readonly showcase = { yaw: 0, pitch: 0.1, distance: 3.1 };
     private arena: ArenaView;
     private arenaQuality: GraphicsQuality;
     private lastShot: ShotTrace | null = null;
@@ -127,12 +137,27 @@ export class Game {
         this.followCamera = new ThirdPersonCamera(this.camera, this.sim.world);
         this.post = new PostEffects(app, this.camera.camera!);
 
-        this.local = this.addActor(OFFLINE_LOCAL_ID, 'blue', null, 'YOU');
+        this.local = this.addActor(OFFLINE_LOCAL_ID, 'blue', null, 'YOU', this.appearance);
         this.input.yaw = this.local.state.yaw;
 
         this.hud = new Hud(uiRoot);
         this.matchPanel = new MatchPanel(uiRoot);
         this.menu = new SettingsMenu(uiRoot, settings);
+        this.wardrobe = new WardrobePanel(uiRoot, app.graphicsDevice.canvas as HTMLCanvasElement, this.appearance);
+        this.menu.onWardrobe = () => this.openWardrobe();
+        this.wardrobe.onChange = (a) => this.previewAppearance(a);
+        this.wardrobe.onSave = (a) => {
+            this.appearance = { ...a };
+            const ok = saveAppearance(a);
+            this.hud.showToast(ok ? '외형을 저장했습니다' : '이 브라우저에 저장하지 못했습니다 (이번 실행에만 적용)', 2);
+        };
+        this.wardrobe.onClose = () => this.menu.show(this.mode === 'menu' ? 'start' : 'paused');
+        this.wardrobe.onOrbit = (dy, dp, zoom) => {
+            const s = this.showcase;
+            s.yaw += dy;
+            s.pitch = Math.max(-0.35, Math.min(0.9, s.pitch + dp));
+            s.distance = Math.max(1.4, Math.min(5, s.distance + zoom * 0.25));
+        };
         this.hud.setVisible(false);
         this.menu.show('start');
 
@@ -216,9 +241,9 @@ export class Game {
         });
     }
 
-    private addActor(id: string, team: TeamId, bot: SimpleBot | null, name: string): Actor {
+    private addActor(id: string, team: TeamId, bot: SimpleBot | null, name: string, appearance: AvatarAppearance): Actor {
         const state = this.sim.addPlayer(id, team);
-        const rig = this.avatars.create(team, this.actors.size * 7 + 3);
+        const rig = this.avatars.create(team, this.actors.size * 7 + 3, appearance);
         const actor: Actor = { state, rig, prev: { ...state.position }, bot, name, net: null };
         this.actors.set(id, actor);
         return actor;
@@ -290,7 +315,11 @@ export class Game {
     }
 
     private addNetActor(net: NetActor) {
-        const rig = this.avatars.create(net.team, this.actors.size * 7 + 3);
+        // Until appearance replication (Gate 3-B) remote players use the default outfit; the
+        // local player shows its own saved outfit on this screen only.
+        const isLocal = net.id === this.online?.sessionId;
+        const look = isLocal ? this.appearance : DEFAULT_APPEARANCE;
+        const rig = this.avatars.create(net.team, this.actors.size * 7 + 3, look);
         const actor: Actor = { state: net.state, rig, prev: { ...net.state.position }, bot: null, name: net.name, net };
         this.actors.set(net.id, actor);
         if (net.id === this.online?.sessionId) this.local = actor;
@@ -354,7 +383,9 @@ export class Game {
             const team = i < enemies ? other : mine;
             const n = ++this.botSerial;
             const id = `bot${n}`;
-            this.addActor(id, team, new SimpleBot(id, 9000 + n), `BOT-${String(n).padStart(2, '0')}`);
+            // Local bots wear random (deterministic) outfits: wardrobe variety / load checks.
+            const look = randomAppearance(seededRandom(9000 + n));
+            this.addActor(id, team, new SimpleBot(id, 9000 + n), `BOT-${String(n).padStart(2, '0')}`, look);
         }
     }
 
@@ -516,8 +547,12 @@ export class Game {
         const ly = lp.y + (ls.position.y - lp.y) * alpha + off.y;
         const lz = lp.z + (ls.position.z - lp.z) * alpha + off.z;
 
-        this.followCamera.zoom(this.input.consumeWheel());
-        this.followCamera.update(dt, { x: lx, y: ly, z: lz, yaw: this.input.yaw, pitch: this.input.pitch, aiming });
+        if (this.wardrobe.isOpen) {
+            this.updateShowcaseCamera(lx, ly, lz);
+        } else {
+            this.followCamera.zoom(this.input.consumeWheel());
+            this.followCamera.update(dt, { x: lx, y: ly, z: lz, yaw: this.input.yaw, pitch: this.input.pitch, aiming });
+        }
         const cam = this.camera.getPosition();
         const profile = QUALITY_PROFILES[this.settings.quality];
 
@@ -639,6 +674,58 @@ export class Game {
         this.hud.setFpsVisible(s.showFps);
     }
 
+    // ── wardrobe ───────────────────────────────────────────────────────────────
+
+    private openWardrobe() {
+        this.menu.hide();
+        this.showcase.yaw = 0;
+        this.showcase.pitch = 0.1;
+        this.showcase.distance = 3.1;
+        this.wardrobe.open(this.appearance);
+        this.previewAppearance(this.appearance);
+    }
+
+    /** Show an outfit on the local avatar (visual only; nothing is sent to the server). */
+    private previewAppearance(a: AvatarAppearance) {
+        void this.local.rig.setAppearance?.(a).then(() => this.updateWardrobeInfo());
+        this.updateWardrobeInfo();
+    }
+
+    private updateWardrobeInfo() {
+        const lib = this.avatars.library;
+        if (!lib) {
+            this.wardrobe.setInfo(
+                this.avatars.status === 'loading'
+                    ? 'GLB 아바타 로딩 중…'
+                    : '기본(legacy) 캐릭터 사용 중 — 의상은 GLB 아바타에서만 바뀝니다'
+            );
+            return;
+        }
+        const t = lib.triangles(this.wardrobe.appearance);
+        this.wardrobe.setInfo(t[0] ? `삼각형 LOD0/1/2 ${t.join(' / ')} · 드로우콜 2` : '의상 불러오는 중…');
+    }
+
+    /** Camera in front of the local player, orbiting with the wardrobe drag/zoom input. */
+    private updateShowcaseCamera(x: number, y: number, z: number) {
+        const s = this.showcase;
+        const a = this.input.yaw + s.yaw;
+        const ty = y + 0.85;
+        // The character faces -Z rotated by yaw: start in front of it; shift the framing so the
+        // avatar sits left of the panel.
+        const fx = -Math.sin(a);
+        const fz = -Math.cos(a);
+        const cp = Math.cos(s.pitch);
+        const sideX = Math.cos(a) * 0.45;
+        const sideZ = -Math.sin(a) * 0.45;
+        this.camera.setPosition(
+            x + fx * s.distance * cp - sideX,
+            ty + Math.sin(s.pitch) * s.distance,
+            z + fz * s.distance * cp - sideZ
+        );
+        this.camera.lookAt(x - sideX, ty - 0.05, z - sideZ);
+        this.camera.camera!.fov = 40;
+    }
+
     /** Debug hooks used by browser checks and the visual/perf scripts; not part of gameplay. */
     get debugState(): PlayerState {
         return this.local.state;
@@ -664,12 +751,26 @@ export class Game {
     get debugAvatars() {
         const kinds: Record<string, number> = {};
         const lods: Record<string, number> = {};
+        let outfitPending = 0;
         for (const a of this.actors.values()) {
             const k = (a.rig as { kind?: string }).kind ?? 'legacy';
             kinds[k] = (kinds[k] ?? 0) + 1;
             lods[a.rig.currentLod] = (lods[a.rig.currentLod] ?? 0) + 1;
+            // GLB avatar still showing a previous outfit while the requested one loads/merges.
+            const sw = a.rig as { appearance?: AvatarAppearance; view?: { currentAppearance?: AvatarAppearance } };
+            const shown = sw.view?.currentAppearance;
+            if (sw.appearance && shown && JSON.stringify(shown) !== JSON.stringify(sw.appearance)) outfitPending++;
         }
-        return { status: this.avatars.status, error: this.avatars.error, pending: this.avatars.pending, kinds, lods, settled: this.avatars.settled };
+        return {
+            status: this.avatars.status,
+            error: this.avatars.error,
+            pending: this.avatars.pending,
+            outfitPending,
+            kinds,
+            lods,
+            settled: this.avatars.settled,
+            library: this.avatars.library?.stats() ?? null
+        };
     }
 
     debugStats() {

@@ -24,8 +24,8 @@
 | 배포 파일 | 원본 | 라이선스 | 생성 방법 |
 |---|---|---|---|
 | `apps/client/public/assets/characters/courier_default_lod{0,1,2}.glb` | `assets-src/blender/colorfront_courier_master.blend` | 프로젝트 자체 제작 | `build_courier.py` |
-| `apps/client/public/assets/characters/courier_base_lod0.glb` | 위 `.blend` | 자체 제작 | 위와 같음 |
-| `apps/client/public/assets/clothes/{top_bomber,bottom_cargo,shoes_runner,hair_sidepart,back_tank_standard}.glb` | 위 `.blend` | 자체 제작 | 위와 같음 |
-| `apps/client/public/assets/weapons/paint_rifle.glb` | 위 `.blend` | 자체 제작 | 위와 같음 |
+| `apps/client/public/assets/characters/courier_base_lod{0,1,2}.glb` (부위별 베이스 몸체. LOD0에만 공용 텍스처 내장) | 위 `.blend` | 자체 제작 | 위와 같음 |
+| `apps/client/public/assets/clothes/{top_bomber,top_hardshell,bottom_cargo,bottom_short,shoes_runner,hair_sidepart,hair_crew,headwear_cap,back_tank_standard}_lod{0,1,2}.glb` (Gate 3 의상, 이미지 미포함) | 위 `.blend` | 자체 제작 | 위와 같음 |
+| `apps/client/public/assets/weapons/paint_rifle_lod{0,1,2}.glb` | 위 `.blend` | 자체 제작 | 위와 같음 |
 | `apps/client/public/assets/characters/courier_{atlas,emissive}_{blue,orange}.png` | `assets-src/blender/textures/` | 자체 제작 | numpy로 그린 절차적 텍스처 |
 | `assets-src/blender/textures/courier_orm.png` | 같음 | 자체 제작 | 같음 |

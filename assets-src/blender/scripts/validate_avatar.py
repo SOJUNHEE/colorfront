@@ -35,14 +35,27 @@ FILES = {
     'characters/courier_default_lod0.glb': {'tris': (5000, 8000), 'full': True, 'muzzle': True},
     'characters/courier_default_lod1.glb': {'tris': (1800, 3000), 'full': True, 'muzzle': True},
     'characters/courier_default_lod2.glb': {'tris': (500, 1200), 'full': True, 'muzzle': True},
-    'characters/courier_base_lod0.glb': {'tris': (0, 8000)},
-    'clothes/top_bomber.glb': {'tris': (0, 3000)},
-    'clothes/bottom_cargo.glb': {'tris': (0, 2000)},
-    'clothes/shoes_runner.glb': {'tris': (0, 1500)},
-    'clothes/hair_sidepart.glb': {'tris': (0, 2500)},
-    'clothes/back_tank_standard.glb': {'tris': (0, 1500)},
-    'weapons/paint_rifle.glb': {'tris': (0, 1000), 'muzzle': True},
 }
+# Wardrobe items (Gate 3): <file>_lod<n>.glb with the mesh nodes the runtime merges
+# (apps/client/src/avatar/catalog.ts). Per-file caps only guard against runaway exports; the
+# per-outfit budget is checked on the merged result (tests/unit/avatarAsset.test.ts).
+WARDROBE = {
+    'characters/courier_base': (['base_head', 'base_hands', 'base_torso', 'base_upperarms', 'base_forearms', 'base_hips',
+                                 'base_thighs', 'base_knees', 'base_shins', 'base_feet'], (4000, 1800, 900)),
+    'clothes/top_bomber': (['top'], (2200, 900, 400)),
+    'clothes/top_hardshell': (['top'], (2200, 900, 400)),
+    'clothes/bottom_cargo': (['bottom'], (1300, 500, 200)),
+    'clothes/bottom_short': (['bottom'], (1300, 500, 250)),
+    'clothes/shoes_runner': (['shoes'], (1200, 450, 150)),
+    'clothes/hair_sidepart': (['hair', 'hair_capped'], (3000, 1100, 400)),
+    'clothes/hair_crew': (['hair', 'hair_capped'], (3000, 1100, 400)),
+    'clothes/headwear_cap': (['headwear'], (1100, 500, 200)),
+    'clothes/back_tank_standard': (['back'], (1000, 400, 200)),
+    'weapons/paint_rifle': (['weapon'], (600, 400, 200)),
+}
+for _name, (_nodes, _caps) in WARDROBE.items():
+    for _lod in range(3):
+        FILES[f'{_name}_lod{_lod}.glb'] = {'tris': (1, _caps[_lod]), 'nodes': _nodes, 'muzzle': _name.endswith('paint_rifle')}
 
 COMP = {5120: ('b', 1), 5121: ('B', 1), 5122: ('h', 2), 5123: ('H', 2), 5125: ('I', 4), 5126: ('f', 4)}
 NCOMP = {'SCALAR': 1, 'VEC2': 2, 'VEC3': 3, 'VEC4': 4, 'MAT4': 16}
@@ -197,6 +210,12 @@ def check(rel, spec):
         res['info']['blend_materials'] = blend
         if len(mats) != 2 or len(blend) != 1:
             fail(f'expected opaque body + 1 transparent tank glass material, got {len(mats)} used, blend={blend}')
+    if spec.get('nodes'):
+        names = {(n.get('name') or '').split('.')[0] for n in nodes if 'mesh' in n}
+        missing = [x for x in spec['nodes'] if x not in names]
+        res['info']['mesh_nodes'] = sorted(names)
+        if missing:
+            fail(f'missing mesh nodes {missing}')
     if spec.get('muzzle'):
         m = [i for i, n in enumerate(nodes) if n.get('name') == 'muzzle']
         if not m:
