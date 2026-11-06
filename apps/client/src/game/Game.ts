@@ -32,7 +32,8 @@ import { OnlineSession, defaultServerUrl } from '../network/OnlineSession.ts';
 import type { NetActor } from '../network/OnlineSession.ts';
 import { PaintEffects } from '../paint/PaintEffects.ts';
 import { PaintRenderer } from '../paint/PaintRenderer.ts';
-import { CharacterRig } from '../player/CharacterRig.ts';
+import { AvatarFactory, avatarKindFromUrl } from '../player/AvatarView.ts';
+import type { AvatarView } from '../player/AvatarView.ts';
 import { ThirdPersonCamera } from '../player/ThirdPersonCamera.ts';
 import { SceneEnvironment } from '../render/Environment.ts';
 import { PostEffects } from '../render/PostEffects.ts';
@@ -50,7 +51,7 @@ const OFFLINE_LOCAL_ID = 'local';
 
 type Actor = {
     state: PlayerState;
-    rig: CharacterRig;
+    rig: AvatarView;
     prev: Vec3;
     /** Offline only: a local bot (graphics/load tool, never a network player). */
     bot: SimpleBot | null;
@@ -87,6 +88,8 @@ export class Game {
     private readonly matchPanel: MatchPanel;
     private readonly paintRenderer: PaintRenderer;
     private readonly effects: PaintEffects;
+    /** Player views: legacy rig until the GLB avatars are loaded, then upgraded in place. */
+    private readonly avatars: AvatarFactory;
     private arena: ArenaView;
     private arenaQuality: GraphicsQuality;
     private lastShot: ShotTrace | null = null;
@@ -116,6 +119,7 @@ export class Game {
         this.arena = this.buildArena(settings.quality);
         this.paintRenderer = new PaintRenderer(app, this.sim.paint, profile.paintDetail);
         this.effects = new PaintEffects(app, profile.particleBudget);
+        this.avatars = new AvatarFactory(app, avatarKindFromUrl());
 
         this.camera = new Entity('camera');
         this.camera.addComponent('camera', { nearClip: 0.1, farClip: 1200 });
@@ -214,7 +218,7 @@ export class Game {
 
     private addActor(id: string, team: TeamId, bot: SimpleBot | null, name: string): Actor {
         const state = this.sim.addPlayer(id, team);
-        const rig = new CharacterRig(this.app, team, this.actors.size * 7 + 3);
+        const rig = this.avatars.create(team, this.actors.size * 7 + 3);
         const actor: Actor = { state, rig, prev: { ...state.position }, bot, name, net: null };
         this.actors.set(id, actor);
         return actor;
@@ -286,7 +290,7 @@ export class Game {
     }
 
     private addNetActor(net: NetActor) {
-        const rig = new CharacterRig(this.app, net.team, this.actors.size * 7 + 3);
+        const rig = this.avatars.create(net.team, this.actors.size * 7 + 3);
         const actor: Actor = { state: net.state, rig, prev: { ...net.state.position }, bot: null, name: net.name, net };
         this.actors.set(net.id, actor);
         if (net.id === this.online?.sessionId) this.local = actor;
@@ -654,6 +658,18 @@ export class Game {
 
     debugSpawnBots(count: number) {
         this.setBots(count);
+    }
+
+    /** Avatar pipeline state (GLB loading / fallback) for checks and perf scripts. */
+    get debugAvatars() {
+        const kinds: Record<string, number> = {};
+        const lods: Record<string, number> = {};
+        for (const a of this.actors.values()) {
+            const k = (a.rig as { kind?: string }).kind ?? 'legacy';
+            kinds[k] = (kinds[k] ?? 0) + 1;
+            lods[a.rig.currentLod] = (lods[a.rig.currentLod] ?? 0) + 1;
+        }
+        return { status: this.avatars.status, error: this.avatars.error, pending: this.avatars.pending, kinds, lods, settled: this.avatars.settled };
     }
 
     debugStats() {

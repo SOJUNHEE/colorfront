@@ -4,11 +4,15 @@
 // browser rAF throttling cannot skew it), draw calls, primitives and VRAM for each quality preset
 // from the same camera position over the same paint layout.
 async (page) => {
-    const [label, mode] = (new URL(page.url()).hash.slice(1) || 'perf').split(':');
+    // `#label[:bots][?avatar=legacy]`
+    const [head, query] = (decodeURIComponent(new URL(page.url()).hash.slice(1)) || 'perf').split('?');
+    const [label, mode] = head.split(':');
     page.setDefaultTimeout(120000);
     await page.setViewportSize({ width: 1366, height: 768 });
-    await page.goto('http://localhost:5173/');
+    await page.goto('http://localhost:5173/' + (query ? '?' + query : ''));
     await page.waitForFunction(() => window.__colorfront && window.__colorfront.game);
+    // Phase 6: wait until GLB avatars are loaded (or the legacy fallback has settled).
+    await page.waitForFunction(() => { const av = window.__colorfront.game.debugAvatars; return !av || av.status !== 'loading'; });
     await page.waitForTimeout(1500);
     const errors = [];
     page.on('pageerror', (e) => errors.push(e.message));

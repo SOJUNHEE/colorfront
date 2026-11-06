@@ -113,8 +113,11 @@ async (page) => {
         await p.waitForTimeout(ms);
         await p.mouse.up({ button: 'left' });
     };
+    // Screenshot folder: `about:blank#<folder>` before stage 1 (default phase3). Absolute path
+    // because the MCP server resolves relative paths against its own working directory.
+    T.shotDir = `C:/Users/user/Desktop/정리전_261105/05_개인실습_사이드프로젝트/5-5_게임개발/fps/colorfront/docs/screenshots/${new globalThis.URL(page.url()).hash.slice(1) || 'phase3'}`;
     T.shot = async (p, name) => {
-        await p.screenshot({ path: `C:/Users/user/Desktop/fps/colorfront/docs/screenshots/phase3/${name}.png` });
+        await p.screenshot({ path: `${T.shotDir}/${name}.png` });
         return name;
     };
 

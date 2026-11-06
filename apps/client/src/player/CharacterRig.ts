@@ -23,6 +23,8 @@ import {
 } from 'playcanvas';
 import type { AppBase, Geometry } from 'playcanvas';
 
+import type { AvatarView } from './AvatarView.ts';
+
 /** Bone hierarchy (rest pose, character facing -Z, +X to its right, feet at the origin). */
 const BONES = [
     ['root', -1, 0, 0, 0],
@@ -349,7 +351,7 @@ const DOWN = new Vec3(0, -1, 0);
  * land, aim, fire recoil, reload, hit flinch, splat/respawn, victory). One draw call for the body
  * and one for the glossy/emissive layer per character; a reduced mesh is used at distance.
  */
-export class CharacterRig {
+export class CharacterRig implements AvatarView {
     readonly root: Entity;
     private readonly bones: Entity[] = [];
     private readonly meshes: { layers: { mesh: Mesh; parts: Part[] }[]; instances: MeshInstance[] }[] = [];
@@ -421,6 +423,12 @@ void getEmission() { dEmission = vVertexColor.rgb * vVertexColor.a * material_em
             this.meshes.push(built);
         }
         app.root.addChild(this.root);
+        // Release the bone texture: the render component nulls skinInstance before destroying its
+        // mesh instances, so a manually assigned SkinInstance would otherwise leak (Phase 6 fix).
+        this.root.once('destroy', () => {
+            this.skinInstance?.destroy();
+            this.skinInstance = null;
+        });
         this.setLod(0);
     }
 

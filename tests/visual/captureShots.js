@@ -4,12 +4,15 @@
 // camera pose, so "before" and "after" captures are directly comparable.
 // Requires the dev server (window.__colorfront debug hooks).
 async (page) => {
-    const label = new URL(page.url()).hash.slice(1) || 'capture';
+    // `#label` or `#label?avatar=legacy` (the query is passed to the game URL for A/B captures).
+    const [label, query] = (decodeURIComponent(new URL(page.url()).hash.slice(1)) || 'capture').split('?');
     const dir = `colorfront/docs/screenshots/${label}`;
     page.setDefaultTimeout(30000);
     await page.setViewportSize({ width: 1366, height: 768 });
-    await page.goto('http://localhost:5173/');
+    await page.goto('http://localhost:5173/' + (query ? '?' + query : ''));
     await page.waitForFunction(() => window.__colorfront && window.__colorfront.game);
+    // Phase 6: wait until GLB avatars are loaded (or the legacy fallback has settled).
+    await page.waitForFunction(() => { const av = window.__colorfront.game.debugAvatars; return !av || av.status !== 'loading'; });
     await page.waitForTimeout(1500);
 
     const errors = [];

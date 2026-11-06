@@ -1,0 +1,13 @@
+
+> colorfront@0.1.0 test
+> vitest run
+
+
+ RUN  v5.0.5 C:/Users/user/Desktop/정리전_261105/05_개인실습_사이드프로젝트/5-5_게임개발/fps/colorfront
+
+
+ Test Files  12 passed (12)
+      Tests  122 passed (122)
+   Start at  10:04:19
+   Duration  36.93s (tests 98%, import 2%)
+
