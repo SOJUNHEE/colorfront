@@ -48,7 +48,9 @@ import { buildArena } from '../scenes/ArenaBuilder.ts';
 import type { ArenaView } from '../scenes/ArenaBuilder.ts';
 import { QUALITY_PROFILES, saveSettings } from '../settings/settings.ts';
 import type { GameSettings, GraphicsQuality } from '../settings/settings.ts';
+import { ChatPanel } from '../ui/ChatPanel.ts';
 import { Hud } from '../ui/Hud.ts';
+import { Leaderboard } from '../ui/Leaderboard.ts';
 import { MatchPanel } from '../ui/MatchPanel.ts';
 import { SettingsMenu } from '../ui/SettingsMenu.ts';
 import { WardrobePanel } from '../ui/WardrobePanel.ts';
@@ -101,6 +103,9 @@ export class Game {
     /** Local player's saved outfit (this device). */
     private appearance: AvatarAppearance = loadAppearance();
     private readonly wardrobe: WardrobePanel;
+    private readonly chat: ChatPanel;
+    private readonly leaderboard: Leaderboard;
+    private leaderTimer = 0;
     /** Showcase camera while the wardrobe is open: orbit around the local player. */
     private readonly showcase = { yaw: 0, pitch: 0.1, distance: 3.1 };
     private arena: ArenaView;
@@ -148,6 +153,18 @@ export class Game {
         this.menu = new SettingsMenu(uiRoot, settings);
         this.wardrobe = new WardrobePanel(uiRoot, app.graphicsDevice.canvas as HTMLCanvasElement, this.appearance);
         this.menu.onWardrobe = () => this.openWardrobe();
+        this.leaderboard = new Leaderboard(uiRoot);
+        this.leaderboard.setVisible(false);
+        this.chat = new ChatPanel(uiRoot);
+        this.chat.onOpenChange = (open) => (this.input.suspended = open);
+        this.chat.onSend = (text, team) => {
+            if (this.mode === 'online' && this.online) {
+                this.online.sendChat(text, team);
+                return;
+            }
+            this.chat.add({ name: 'YOU', team: this.local.state.team, text, scope: team ? 'team' : 'all' }, true);
+            this.chat.add({ name: '', team: '', text: '오프라인 연습: 메시지는 나에게만 보입니다', scope: 'all' }, false, true);
+        };
         this.wardrobe.onChange = (a) => this.previewAppearance(a);
         this.wardrobe.onSave = (a) => {
             this.appearance = { ...a };
@@ -188,6 +205,7 @@ export class Game {
         };
         this.input.onLockChange = (locked) => {
             this.hud.setVisible(locked);
+            this.leaderboard.setVisible(locked);
             if (locked) this.menu.hide();
             else this.menu.show(this.mode === 'menu' ? 'start' : 'paused');
         };
@@ -215,6 +233,7 @@ export class Game {
             if (code === 'KeyT' && this.mode !== 'online')
                 this.setTeam(this.local.state.team === 'blue' ? 'orange' : 'blue');
             if (code === 'KeyG') this.toggleReady();
+            if (code === 'Enter' || code === 'NumpadEnter') this.chat.openInput();
             const slot = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(code);
             if (slot >= 0 && PLAYABLE_WEAPONS[slot]) this.chooseWeapon(PLAYABLE_WEAPONS[slot]);
         };
@@ -303,6 +322,9 @@ export class Game {
             this.input.pitch = 0;
         };
         session.onEvents = (events) => this.handleNetEvents(events);
+        session.onChat = (lines) => {
+            for (const m of lines) this.chat.add(m, m.id === session.sessionId);
+        };
         session.onPaint = (changed) => {
             if (this.landingUntil <= this.paintRenderer.now) return;
             for (const i of changed) this.paintRenderer.hold(i, this.landingUntil);
@@ -625,6 +647,12 @@ export class Game {
 
         this.paintRenderer.update(dt);
         this.effects.update(dt);
+        this.chat.update();
+        this.leaderTimer -= dt;
+        if (this.leaderTimer <= 0) {
+            this.leaderTimer = 0.25;
+            this.leaderboard.update(this.leaderEntries(), this.localId);
+        }
         const score = this.currentScore();
         this.arena.update(dt, score);
 
@@ -691,6 +719,17 @@ export class Game {
         this.input.sensitivity = s.sensitivity;
         this.input.invertY = s.invertY;
         this.hud.setFpsVisible(s.showFps);
+    }
+
+    /** Painted-area ranking source: the server's replicated stats online, the simulation offline. */
+    private leaderEntries() {
+        if (this.mode === 'online' && this.online) {
+            return [...this.online.actors.values()].map((a) => ({ id: a.id, name: a.name, team: a.team, painted: a.painted, kills: a.kills }));
+        }
+        return [...this.actors.entries()].map(([id, a]) => {
+            const st = this.sim.stats.get(id);
+            return { id, name: a.name, team: a.state.team, painted: st?.painted ?? 0, kills: st?.kills ?? 0 };
+        });
     }
 
     // ── weapons ────────────────────────────────────────────────────────────────

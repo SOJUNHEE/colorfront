@@ -27,6 +27,18 @@ export const ClientMessage = {
 /** Minimum time between accepted weapon choices from one player. */
 export const WEAPON_MIN_INTERVAL_MS = 250;
 
+/** Chat: visible characters per line, burst size and refill (one line per CHAT_REFILL_MS). */
+export const CHAT_MAX_LENGTH = 80;
+export const CHAT_BURST = 3;
+export const CHAT_REFILL_MS = 1500;
+export const CHAT_HISTORY = 20;
+
+/** Client -> server chat payload. `team` = only teammates receive it. */
+export type ChatRequest = { text: string; team?: boolean };
+
+/** Server -> clients chat line (name/team come from the server, never from the client). */
+export type ChatMessage = { id: string; name: string; team: string; text: string; scope: 'all' | 'team'; t: number };
+
 /** Minimum time between accepted outfit changes from one player. */
 export const LOOK_MIN_INTERVAL_MS = 1000;
 export type ClientMessage = (typeof ClientMessage)[keyof typeof ClientMessage];
@@ -41,7 +53,9 @@ export const ServerMessage = {
     PaintHash: 'paint:hash',
     /** Batched gameplay events of one server tick. */
     Events: 'ev',
-    RoundResult: 'round:result'
+    RoundResult: 'round:result',
+    /** ChatMessage (one line) or ChatMessage[] (history for a joining player). */
+    Chat: 'chat'
 } as const;
 export type ServerMessage = (typeof ServerMessage)[keyof typeof ServerMessage];
 

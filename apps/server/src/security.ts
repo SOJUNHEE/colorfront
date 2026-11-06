@@ -18,6 +18,22 @@ export function sanitizeName(raw: unknown, fallbackSeed: string): string {
 }
 
 /**
+ * Chat text: NFC, no control / zero-width / bidi-override characters, single spaces, at most
+ * `max` visible characters. Returns null for anything that is not a non-empty string. Clients
+ * render it as text (never HTML).
+ */
+export function sanitizeChat(raw: unknown, max: number): string | null {
+    if (typeof raw !== 'string' || raw.length > max * 8) return null;
+    const cleaned = raw
+        .normalize('NFC')
+        .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const text = Array.from(cleaned).slice(0, max).join('');
+    return text.length ? text : null;
+}
+
+/**
  * Parse an untrusted `in` message ([seq, moveX, moveZ, yaw, pitch, buttons]). Returns null for
  * anything that is not exactly that shape; values are clamped by the shared sanitizer.
  */

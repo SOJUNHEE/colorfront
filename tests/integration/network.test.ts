@@ -15,7 +15,7 @@ import {
     paintPercent,
     stepPlayer
 } from '@colorfront/shared';
-import type { PaintGrid } from '@colorfront/shared';
+import type { ChatMessage, PaintGrid } from '@colorfront/shared';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import type { MatchRoom } from '../../apps/server/src/rooms/MatchRoom.ts';
@@ -531,5 +531,68 @@ describe('network: weapons (Phase 6)', () => {
         await waitFor(() => A.me().nextWeapon === 'long-sniper', 3000, 'queued for respawn');
         expect(B.state.players.get(id).weapon).toBe('splash-shotgun');
         expect(B.state.players.get(id).nextWeapon).toBeUndefined();
+    });
+});
+
+describe('network: chat (Phase 6)', () => {
+    const listen = (probe: NetProbe) => {
+        const got: ChatMessage[] = [];
+        probe.room.onMessage('chat', (m: ChatMessage | ChatMessage[]) => got.push(...(Array.isArray(m) ? m : [m])));
+        return got;
+    };
+
+    it('broadcasts sanitized lines with the server-side name/team, rate limited', async () => {
+        const { A, B, room } = await pair();
+        const gotA = listen(A);
+        const gotB = listen(B);
+        const rejected0 = room.metrics.rejected;
+        A.room.send(ClientMessage.Chat, { text: '  안녕‮ 하세요  <b>bold</b>  ', team: false });
+        await waitFor(() => gotB.length === 1, 3000, 'B gets the line');
+        const line = gotB[0];
+        expect(line.text).toBe('안녕 하세요 <b>bold</b>'); // control/bidi chars stripped; markup stays inert text
+        expect(line.name).toBe('Alice');
+        expect(line.team).toBe('blue');
+        expect(line.scope).toBe('all');
+        expect(gotA).toHaveLength(1); // the sender sees its own line from the server
+        // Length cap.
+        await sleep(1600);
+        A.room.send(ClientMessage.Chat, { text: 'x'.repeat(300) });
+        await waitFor(() => gotB.length === 2, 3000, 'long line');
+        expect(Array.from(gotB[1].text)).toHaveLength(80);
+        // Burst of 6: the bucket (3, refilling 1 per 1.5 s) lets some through and rejects the rest.
+        for (let i = 0; i < 6; i++) A.room.send(ClientMessage.Chat, { text: `spam ${i}` });
+        await sleep(400);
+        const spam = gotB.filter((m) => m.text.startsWith('spam')).length;
+        expect(spam).toBeGreaterThanOrEqual(1);
+        expect(spam).toBeLessThanOrEqual(3);
+        expect(room.metrics.rejected - rejected0).toBe(6 - spam);
+        // Forged payloads are rejected.
+        for (const bad of [42, { text: 7 }, { text: '   ' }, null]) A.room.send(ClientMessage.Chat, bad);
+        await sleep(200);
+        expect(room.metrics.rejected - rejected0).toBe(6 - spam + 4);
+    });
+
+    it('team lines only reach teammates; late joiners get the public history', async () => {
+        const { A, B } = await pair();
+        const third = await NetProbe.join(server.url, 'Cara', {}, A.room.roomId); // balances onto blue (A's team)
+        open.push(third.probe);
+        const C = third.probe;
+        await waitFor(() => C.state?.players?.get(C.sessionId)?.team !== undefined, 3000, 'C in state');
+        expect(C.me().team).toBe('blue');
+        const gotB = listen(B);
+        const gotC = listen(C);
+        A.room.send(ClientMessage.Chat, { text: '팀 작전', team: true });
+        await waitFor(() => gotC.length === 1, 3000, 'teammate gets it');
+        await sleep(300);
+        expect(gotC[0].scope).toBe('team');
+        expect(gotB).toHaveLength(0);
+        A.room.send(ClientMessage.Chat, { text: '모두 안녕' });
+        await waitFor(() => gotB.length === 1, 3000, 'public line');
+        const late = await NetProbe.join(server.url, 'Dan', {}, A.room.roomId);
+        open.push(late.probe);
+        const gotD = listen(late.probe);
+        await waitFor(() => gotD.length >= 1, 3000, 'history');
+        expect(gotD.map((m) => m.text)).toContain('모두 안녕');
+        expect(gotD.map((m) => m.text)).not.toContain('팀 작전');
     });
 });

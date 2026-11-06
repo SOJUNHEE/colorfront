@@ -11,6 +11,7 @@ import {
     sanitizeInput
 } from '@colorfront/shared';
 import type {
+    ChatMessage,
     CollisionWorld,
     EventsMessage,
     HelloMessage,
@@ -184,6 +185,8 @@ export class OnlineSession {
     private lastShotEventAt = 0;
 
     onActorAdded?: (actor: NetActor) => void;
+    /** Chat lines from the server (one live line, or the history right after joining). */
+    onChat?: (lines: ChatMessage[]) => void;
     /** A player's replicated outfit changed (not called for the initial value). */
     onActorLook?: (actor: NetActor) => void;
     /** Outfit sent at join and on change (look string). */
@@ -271,6 +274,7 @@ export class OnlineSession {
             this.result = m;
             this.onResult?.(m);
         });
+        room.onMessage(ServerMessage.Chat, (m: ChatMessage | ChatMessage[]) => this.onChat?.(Array.isArray(m) ? m : [m]));
         room.onMessage('metrics', () => undefined); // diagnostics reply; ignored by the game
         room.onStateChange((state) => this.onState(state as unknown as MatchStateLike));
         room.onDrop(() => this.setStatus('reconnecting'));
@@ -331,6 +335,11 @@ export class OnlineSession {
         const wait = this.lastLookSent + LOOK_MIN_INTERVAL_MS + 50 - Date.now();
         if (wait <= 0) this.sendLook();
         else this.lookTimer = setTimeout(() => this.sendLook(), wait);
+    }
+
+    /** Send a chat line (the server sanitizes, rate limits and adds name/team). */
+    sendChat(text: string, team: boolean) {
+        if (this.room && this.status === 'connected') this.room.send(ClientMessage.Chat, { text, team });
     }
 
     /** Choose a weapon (the server validates and decides now vs next respawn). */

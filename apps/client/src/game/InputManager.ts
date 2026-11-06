@@ -35,6 +35,18 @@ export class InputManager {
     /** Called with the new state whenever pointer lock is gained or lost. */
     onLockChange?: (locked: boolean) => void;
 
+    /** True while a text box (chat) has the keyboard: game keys and buttons are ignored. */
+    private suspendedFlag = false;
+
+    get suspended() {
+        return this.suspendedFlag;
+    }
+
+    set suspended(v: boolean) {
+        this.suspendedFlag = v;
+        if (v) this.releaseAll();
+    }
+
     /** Non-simulation key presses while locked (e.g. developer shortcuts). */
     onKeyAction?: (code: string) => void;
 
@@ -119,7 +131,7 @@ export class InputManager {
     }
 
     private onKey(e: KeyboardEvent, down: boolean) {
-        if (!this.locked) return;
+        if (!this.locked || this.suspendedFlag) return;
         // Keep the page from scrolling or the browser from moving focus while playing.
         if (e.code === 'Space' || e.code === 'Tab') e.preventDefault();
         if (down) this.keys.add(e.code);
@@ -130,7 +142,7 @@ export class InputManager {
     }
 
     private onMouseButton(e: MouseEvent, down: boolean) {
-        if (!this.locked) return;
+        if (!this.locked || this.suspendedFlag) return;
         if (e.button === 0) this.press(InputButton.Fire, down);
         else if (e.button === 2) this.press(InputButton.Aim, down);
     }

@@ -1,6 +1,10 @@
 import {
     ClientMessage,
     InputButton,
+    CHAT_BURST,
+    CHAT_HISTORY,
+    CHAT_MAX_LENGTH,
+    CHAT_REFILL_MS,
     LOOK_MIN_INTERVAL_MS,
     WEAPON_MIN_INTERVAL_MS,
     MAX_PLAYERS_PER_ROOM,
@@ -22,6 +26,7 @@ import {
     packVec
 } from '@colorfront/shared';
 import type {
+    ChatMessage,
     EventsMessage,
     FlowChange,
     HelloMessage,
@@ -40,7 +45,7 @@ import type { Client } from '@colyseus/core';
 
 import { TickMetrics } from '../metrics.ts';
 import { MatchState, NetPlayer } from '../schema.ts';
-import { parseInput, sanitizeName } from '../security.ts';
+import { parseInput, sanitizeChat, sanitizeName } from '../security.ts';
 
 /**
  * Input pacing (D-016). Every client input is simulated exactly once, in order, so the server ends
@@ -73,6 +78,9 @@ type Session = {
     /** Wall-clock ms of the last accepted outfit change (cosmetic, rate limited). */
     lastLookAt: number;
     lastWeaponAt: number;
+    /** Chat token bucket. */
+    chatTokens: number;
+    chatAt: number;
 };
 
 /**
@@ -121,6 +129,7 @@ export class MatchRoom extends Room<{ state: MatchState }> {
         this.onMessage(ClientMessage.PaintResync, (client) => this.sendSnapshot(client));
         this.onMessage(ClientMessage.Look, (client, raw) => this.onLook(client, raw));
         this.onMessage(ClientMessage.Weapon, (client, raw) => this.onWeapon(client, raw));
+        this.onMessage(ClientMessage.Chat, (client, raw) => this.onChat(client, raw));
         this.onMessage('metrics', (client) => client.send('metrics', this.metricsSnapshot()));
         // Anything else (forged "damage"/"paint"/position messages, old clients) is dropped and counted.
         this.onMessage('*', () => this.metrics.rejected++);
@@ -146,7 +155,7 @@ export class MatchRoom extends Room<{ state: MatchState }> {
         this.writePlayer(net, state);
         this.state.players.set(client.sessionId, net);
         this.giveOwnerView(client);
-        this.sessions.set(client.sessionId, { queue: [], last: null, lastSeq: 0, credits: 1, lastLookAt: 0, lastWeaponAt: 0 });
+        this.sessions.set(client.sessionId, { queue: [], last: null, lastSeq: 0, credits: 1, lastLookAt: 0, lastWeaponAt: 0, chatTokens: CHAT_BURST, chatAt: Date.now() });
         this.greet(client);
     }
 
@@ -190,6 +199,7 @@ export class MatchRoom extends Room<{ state: MatchState }> {
         };
         client.send(ServerMessage.Hello, hello);
         this.sendSnapshot(client);
+        if (this.chatHistory.length) client.send(ServerMessage.Chat, this.chatHistory);
     }
 
     private sendSnapshot(client: Client) {
@@ -219,6 +229,39 @@ export class MatchRoom extends Room<{ state: MatchState }> {
     }
 
     /** Weapon choice: allowlisted id, rate limited; the simulation decides now vs next respawn. */
+    /** Recent public chat lines, sent to players who join later. */
+    private chatHistory: ChatMessage[] = [];
+
+    /** Chat: sanitized text, token-bucket rate limit, name/team from the server. Team lines only
+     *  reach teammates. Nothing here touches the simulation. */
+    private onChat(client: Client, raw: unknown) {
+        const p = this.state.players.get(client.sessionId);
+        const s = this.sessions.get(client.sessionId);
+        const req = (typeof raw === 'object' && raw !== null ? raw : { text: raw }) as { text?: unknown; team?: unknown };
+        const text = sanitizeChat(req.text, CHAT_MAX_LENGTH);
+        if (!p || !s || !text) {
+            this.metrics.rejected++;
+            return;
+        }
+        const now = Date.now();
+        s.chatTokens = Math.min(CHAT_BURST, s.chatTokens + (now - s.chatAt) / CHAT_REFILL_MS);
+        s.chatAt = now;
+        if (s.chatTokens < 1) {
+            this.metrics.rejected++;
+            return;
+        }
+        s.chatTokens -= 1;
+        const team = req.team === true;
+        const msg: ChatMessage = { id: client.sessionId, name: p.name, team: p.team, text, scope: team ? 'team' : 'all', t: now };
+        if (team) {
+            for (const c of this.clients) if (this.state.players.get(c.sessionId)?.team === p.team) c.send(ServerMessage.Chat, msg);
+        } else {
+            this.broadcast(ServerMessage.Chat, msg);
+            this.chatHistory.push(msg);
+            if (this.chatHistory.length > CHAT_HISTORY) this.chatHistory.shift();
+        }
+    }
+
     private onWeapon(client: Client, raw: unknown) {
         const s = this.sessions.get(client.sessionId);
         const now = Date.now();
