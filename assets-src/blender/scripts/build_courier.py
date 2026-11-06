@@ -54,44 +54,71 @@ def to_runtime(v):
 
 
 # ── palette / atlas ──────────────────────────────────────────────────────────────────────────────
-# Atlas: 1024 x 512. Left half = 8x8 palette cells (64 px). Right half = 2x2 face-expression tiles
-# (256 px): 0 neutral, 1 blink, 2 happy, 3 surprised. Cells (6..7, 6..7) hold the team emblem.
-ATLAS_W, ATLAS_H = 1024, 512
+# ONE shared atlas, 1536 x 1024 (Blender pixel rows from the bottom):
+#   * palette: 8 x 8 cells of 64 px at (0..512, 0..512). Variants of a colour family live in
+#     different cells (skin tones, hair colours, outfit schemes, blue/orange team colours); the
+#     runtime picks a variant by remapping UVs when it merges an outfit, so every avatar shares
+#     one material and one texture whatever its team, skin, hair or outfit colour.
+#   * emblems: blue 2x2 block at cells (6..7, 6..7), orange at (4..5, 6..7).
+#   * face tiles: 256 px at x = 512 + expr * 256, y = tone * 256 (4 expressions x 4 skin tones).
+# ORM and emissive maps share the layout at half resolution. The layout is written to
+# atlas_layout.json and checked against the runtime constants by a unit test.
+ATLAS_W, ATLAS_H = 1536, 1024
 CELL = 64
+FACE_TILE = 256
+EXPRESSIONS = ('neutral', 'blink', 'happy', 'surprised')
 
 TEAMS = {
     'blue': {'team': '#2876F2', 'team_d': '#1849A8', 'team_l': '#86B4FF'},
     'orange': {'team': '#FF6E35', 'team_d': '#C24418', 'team_l': '#FFB592'},
 }
 
-# name: (colour or team key, roughness, metalness, emissive strength)
-CELLS = [
-    ('skin', '#F2C4A2', 0.55, 0.0, 0),
-    ('graphite', '#2F3B52', 0.78, 0.0, 0),
-    ('graphite_l', '#4B5A78', 0.7, 0.0, 0),
-    ('ivory', '#EEE8DB', 0.62, 0.0, 0),
-    ('team', 'team', 0.42, 0.0, 0),
-    ('team_d', 'team_d', 0.5, 0.0, 0),
-    ('rubber', '#272A32', 0.88, 0.0, 0),
-    ('hair', '#36395A', 0.34, 0.0, 0),
-    ('metal', '#77808E', 0.32, 0.85, 0),
-    ('led', 'team_l', 0.25, 0.0, 1.0),
-    ('sole', '#E2DCCD', 0.72, 0.0, 0),
-    ('slate', '#5E6E88', 0.8, 0.0, 0),
-    ('slate_d', '#46546E', 0.82, 0.0, 0),
-    ('glove', '#3A404D', 0.7, 0.0, 0),
-    ('strap', '#3E4452', 0.75, 0.0, 0),
-    ('skin_d', '#E3A787', 0.6, 0.0, 0),
-    ('yellow', '#F4C431', 0.5, 0.0, 0),
-    ('liquid', 'team', 0.08, 0.0, 0.55),
-    ('team_l', 'team_l', 0.45, 0.0, 0),
-    ('white', '#FFFFFF', 0.4, 0.0, 0),
-    ('under', '#3E4A61', 0.8, 0.0, 0),
-    ('glass', '#DCE8F2', 0.05, 0.0, 0),
-    ('hair_brown', '#7A5038', 0.36, 0.0, 0),
-]
-CELL_INDEX = {c[0]: i for i, c in enumerate(CELLS)}
-EMBLEM = (6, 6)  # first cell (col,row) of the 2x2 emblem block
+SKIN_TONES = [('light', '#F2C4A2', '#E3A787'), ('warm', '#DDA27C', '#C98863'), ('tan', '#B07650', '#985F3D'),
+              ('deep', '#73492F', '#5E3A25')]
+HAIR_COLORS = [('navy', '#36395A'), ('brown', '#7A5038'), ('black', '#24252C'), ('blonde', '#E0B45A'),
+               ('pink', '#E77FAE'), ('silver', '#C6CBD3'), ('green', '#3F9C74'), ('red', '#B4432C')]
+# graphite / graphite_l / slate / slate_d per outfit scheme
+OUTFIT_SCHEMES = [('graphite', ('#2F3B52', '#4B5A78', '#5E6E88', '#46546E')),
+                  ('sand', ('#7E6A50', '#A28C6C', '#BBA582', '#8F7A5C')),
+                  ('olive', ('#4A5637', '#67744C', '#7E8B62', '#566240')),
+                  ('frost', ('#B4BAC4', '#D3D8DF', '#E4E8ED', '#A3AAB6'))]
+
+# index -> (name, colour, roughness, metalness, emissive strength); None = reserved (emblems)
+CELLS = [None] * 64
+_i = 0
+for name, base_c, dark_c in SKIN_TONES:
+    CELLS[_i] = (f'skin_{name}', base_c, 0.55, 0.0, 0)
+    CELLS[_i + 1] = (f'skin_{name}_d', dark_c, 0.6, 0.0, 0)
+    _i += 2
+for team in ('blue', 'orange'):
+    c = TEAMS[team]
+    CELLS[_i:_i + 5] = [(f'team_{team}', c['team'], 0.42, 0.0, 0), (f'team_d_{team}', c['team_d'], 0.5, 0.0, 0),
+                        (f'team_l_{team}', c['team_l'], 0.45, 0.0, 0), (f'led_{team}', c['team_l'], 0.25, 0.0, 1.0),
+                        (f'liquid_{team}', c['team'], 0.08, 0.0, 0.55)]
+    _i += 5
+for name, col in HAIR_COLORS:
+    CELLS[_i] = (f'hair_{name}', col, 0.34, 0.0, 0)
+    _i += 1
+for name, cols in OUTFIT_SCHEMES:
+    for fam, col, rough in zip(('graphite', 'graphite_l', 'slate', 'slate_d'), cols, (0.78, 0.7, 0.8, 0.82)):
+        CELLS[_i] = (f'{fam}_{name}', col, rough, 0.0, 0)
+        _i += 1
+for entry in [('ivory', '#EEE8DB', 0.62, 0.0, 0), ('rubber', '#272A32', 0.88, 0.0, 0), ('metal', '#77808E', 0.32, 0.85, 0),
+              ('sole', '#E2DCCD', 0.72, 0.0, 0), ('yellow', '#F4C431', 0.5, 0.0, 0), ('white', '#FFFFFF', 0.4, 0.0, 0),
+              ('glass', '#DCE8F2', 0.05, 0.0, 0), ('glove', '#3A404D', 0.7, 0.0, 0), ('strap', '#3E4452', 0.75, 0.0, 0),
+              ('under', '#3E4A61', 0.8, 0.0, 0)]:
+    CELLS[_i] = entry
+    _i += 1
+assert _i == 52, _i
+CELLS[56] = ('accent_gold', '#D7A43A', 0.35, 0.7, 0)
+CELLS[57] = ('lens', '#1A2433', 0.08, 0.2, 0)
+EMBLEMS = {'blue': (6, 6), 'orange': (4, 6)}  # first cell (col, row) of each 2x2 block
+CELL_INDEX = {c[0]: i for i, c in enumerate(CELLS) if c}
+# Builder names -> default variant cells (blue team, light skin, navy hair, graphite outfit).
+ALIASES = {'skin': 'skin_light', 'skin_d': 'skin_light_d', 'team': 'team_blue', 'team_d': 'team_d_blue',
+           'team_l': 'team_l_blue', 'led': 'led_blue', 'liquid': 'liquid_blue', 'hair': 'hair_navy',
+           'graphite': 'graphite_graphite', 'graphite_l': 'graphite_l_graphite', 'slate': 'slate_graphite',
+           'slate_d': 'slate_d_graphite'}
 
 
 def hex_rgb(h):
@@ -100,21 +127,33 @@ def hex_rgb(h):
 
 
 def cell_uv(name):
-    i = CELL_INDEX[name]
+    i = CELL_INDEX[ALIASES.get(name, name)]
     c, r = i % 8, i // 8
     return ((c * CELL + CELL / 2) / ATLAS_W, (r * CELL + CELL / 2) / ATLAS_H)
 
 
 def face_tile_uv(tu, tv, tile=0):
-    """Tile-local (0..1) -> atlas UV for face tile `tile`."""
-    col, row = tile % 2, tile // 2
-    return (0.5 + (col + tu) * 0.25, (row + tv) * 0.5)
+    """Tile-local (0..1) -> atlas UV of expression `tile` for skin tone 0 (runtime offsets the tone)."""
+    return ((512 + (tile + tu) * FACE_TILE) / ATLAS_W, (tv * FACE_TILE) / ATLAS_H)
 
 
-def emblem_uv(eu, ev):
-    c, r = EMBLEM
+def emblem_uv(eu, ev, team='blue'):
+    c, r = EMBLEMS[team]
     return ((c * CELL + eu * 2 * CELL) / ATLAS_W, (r * CELL + ev * 2 * CELL) / ATLAS_H)
 
+
+def write_layout():
+    layout = {
+        'width': ATLAS_W, 'height': ATLAS_H, 'cell': CELL, 'faceTile': FACE_TILE, 'faceOriginX': 512,
+        'expressions': list(EXPRESSIONS),
+        'cells': {c[0]: i for i, c in enumerate(CELLS) if c},
+        'emblems': {k: list(v) for k, v in EMBLEMS.items()},
+        'skinTones': [t[0] for t in SKIN_TONES], 'hairColors': [h[0] for h in HAIR_COLORS],
+        'outfitSchemes': [s[0] for s in OUTFIT_SCHEMES],
+    }
+    import json
+    with open(os.path.join(SRC, 'atlas_layout.json'), 'w', encoding='utf-8') as f:
+        json.dump(layout, f, indent=1)
 
 # ── procedural 2D drawing (numpy, supersampled) ──────────────────────────────────────────────────
 def smooth_mask(sdf, aa):
@@ -155,14 +194,14 @@ INK = hex_rgb('#1F1A24')
 BROW = hex_rgb('#2B2E44')
 
 
-def draw_face(expr, size=256, ss=4):
+def draw_face(expr, skin=None, size=256, ss=4):
     """One face tile. Tile coords: u = (x + 0.18) / 0.36, v = (y - 1.22) / 0.36 (runtime metres)."""
     n = size * ss
     ys, xs = np.mgrid[0:n, 0:n]
     u = (xs + 0.5) / n
     v = (ys + 0.5) / n  # row 0 = bottom (Blender pixel order)
     img = np.zeros((n, n, 4), dtype=np.float32)
-    img[..., :3] = SKIN
+    img[..., :3] = SKIN if skin is None else skin
     img[..., 3] = 1
     aa = 1.5 / n
     # Cheeks.
@@ -244,44 +283,47 @@ def draw_emblem(team, size=128, ss=4):
 
 
 def build_textures():
-    """Write the team atlases, ORM (R=AO, G=roughness, B=metal) and emissive maps."""
-    faces = [draw_face(e) for e in ('neutral', 'blink', 'happy', 'surprised')]
+    """Write the shared atlas (full res), ORM (R=AO, G=roughness, B=metal) and emissive (half res)."""
+    base = np.zeros((ATLAS_H, ATLAS_W, 4), dtype=np.float32)
+    base[..., :3] = hex_rgb('#808080')
+    base[..., 3] = 1
+    orm = np.zeros_like(base)
+    orm[..., 0] = 1
+    orm[..., 1] = 0.6
+    orm[..., 3] = 1
+    emi = np.zeros_like(base)
+    emi[..., 3] = 1
+    for i, cell in enumerate(CELLS):
+        if not cell:
+            continue
+        name, col, rough, metal, glow = cell
+        rgb = hex_rgb(col)
+        c, r = i % 8, i // 8
+        rs, cs = slice(r * CELL, (r + 1) * CELL), slice(c * CELL, (c + 1) * CELL)
+        base[rs, cs, :3] = rgb
+        orm[rs, cs, 1] = rough
+        orm[rs, cs, 2] = metal
+        if glow:
+            emi[rs, cs, :3] = np.array(rgb) * glow
+    for team, (c, r) in EMBLEMS.items():
+        base[r * CELL:(r + 2) * CELL, c * CELL:(c + 2) * CELL] = draw_emblem(team)
+        orm[r * CELL:(r + 2) * CELL, c * CELL:(c + 2) * CELL, 1] = 0.5
+    for t, (_, skin, _) in enumerate(SKIN_TONES):
+        for e, expr in enumerate(EXPRESSIONS):
+            ys, xs = slice(t * FACE_TILE, (t + 1) * FACE_TILE), slice(512 + e * FACE_TILE, 512 + (e + 1) * FACE_TILE)
+            base[ys, xs] = draw_face(expr, hex_rgb(skin), size=FACE_TILE, ss=3)
+            orm[ys, xs, 1] = 0.5
+
+    def half(a):
+        return a.reshape(ATLAS_H // 2, 2, ATLAS_W // 2, 2, 4).mean(axis=(1, 3))
     paths = {}
-    for team, cols in TEAMS.items():
-        base = np.zeros((ATLAS_H, ATLAS_W, 4), dtype=np.float32)
-        base[..., 3] = 1
-        orm = np.zeros_like(base)
-        orm[..., 0] = 1
-        orm[..., 3] = 1
-        emi = np.zeros_like(base)
-        emi[..., 3] = 1
-        base[:, :512, :3] = hex_rgb('#808080')
-        orm[:, :, 1] = 0.6
-        for i, (name, col, rough, metal, glow) in enumerate(CELLS):
-            c, r = i % 8, i // 8
-            rgb = hex_rgb(cols[col]) if col in cols else hex_rgb(col)
-            sl = (slice(r * CELL, (r + 1) * CELL), slice(c * CELL, (c + 1) * CELL))
-            base[sl[0], sl[1], :3] = rgb
-            orm[sl[0], sl[1], 1] = rough
-            orm[sl[0], sl[1], 2] = metal
-            if glow:
-                emi[sl[0], sl[1], :3] = np.array(rgb) * glow
-        ec, er = EMBLEM
-        base[er * CELL:(er + 2) * CELL, ec * CELL:(ec + 2) * CELL] = draw_emblem(team)
-        orm[er * CELL:(er + 2) * CELL, ec * CELL:(ec + 2) * CELL, 1] = 0.5
-        for t, img in enumerate(faces):
-            col, row = t % 2, t // 2
-            base[row * 256:(row + 1) * 256, 512 + col * 256:512 + (col + 1) * 256] = img
-            orm[row * 256:(row + 1) * 256, 512 + col * 256:512 + (col + 1) * 256, 1] = 0.5
-        for kind, arr in (('atlas', base), ('emissive', emi)):
-            p = os.path.join(TEX, f'courier_{kind}_{team}.png')
-            save_png(p, arr, f'courier_{kind}_{team}')
-            paths[(kind, team)] = p
-        if team == 'blue':
-            p = os.path.join(TEX, 'courier_orm.png')
-            save_png(p, orm, 'courier_orm')
-            paths[('orm', None)] = p
-    return paths
+    for kind, arr in (('atlas', base), ('orm', half(orm)), ('emissive', half(emi))):
+        p = os.path.join(TEX, f'courier_{kind}.png')
+        save_png(p, arr, f'courier_{kind}')
+        paths[kind] = p
+    write_layout()
+    return {('atlas', 'blue'): paths['atlas'], ('atlas', 'orange'): paths['atlas'], ('emissive', 'blue'): paths['emissive'],
+            ('emissive', 'orange'): paths['emissive'], ('orm', None): paths['orm']}
 
 
 def save_png(path, arr, name):
@@ -771,8 +813,8 @@ def join(objs, name):
 # ── character parts ──────────────────────────────────────────────────────────────────────────────
 # Per-LOD triangle targets (see 01_AUDIT.md: LOD0 5-8k, LOD1 1.8-3k, LOD2 0.5-1.2k per avatar).
 BUDGET = {
-    'head': (620, 210, 90), 'hair_cap': (340, 110, 50), 'lock': (114, 33, 24),
-    'jacket': (700, 230, 100), 'pants': (620, 230, 90), 'shoe_upper': (150, 60, 24),
+    'head': (580, 185, 84), 'hair_cap': (330, 100, 46), 'lock': (104, 30, 22),
+    'jacket': (640, 205, 90), 'pants': (620, 230, 90), 'shoe_upper': (120, 50, 20),
     'sole': (80, 36, 12), 'glove': (120, 44, 18),
 }
 
@@ -1095,7 +1137,7 @@ def build_tank(d):
     plate = rbox('backplate', (0, 0.985, 0.16), (0.2, 0.3, 0.045), bevel=L(d, 0.7, 0.6, 0), segs=1)
     parts.append(finish(plate, 'graphite_l', sharp=40))
     for y in ((0.79, 1.17) if d < 2 else ()):
-        ring = cylinder('tankring', (0, y - 0.018, 0.215), (0, y + 0.018, 0.215), 0.074, segs=L(d, 16, 10))
+        ring = cylinder('tankring', (0, y - 0.018, 0.215), (0, y + 0.018, 0.215), 0.074, segs=L(d, 12, 8))
         parts.append(finish(ring, 'metal', sharp=40))
     # Diagonal arch frame behind the window (COLORFRONT-specific silhouette).
     arch = [(-0.125, 0.8, 0.17), (-0.115, 0.93, 0.285), (-0.02, 1.07, 0.315), (0.09, 1.17, 0.285), (0.125, 1.23, 0.18)]
@@ -1280,7 +1322,7 @@ def build_base_regions(d):
                   ((sx * 0.094, 0.37, 0), (0.054, 0.054)), ((sx * 0.097, 0.1, 0), (0.044, 0.044))]
         edges += [(0, c), (c, c + 1), (c + 1, c + 2), (c + 2, c + 3)]
     body = skin_body('base_body', nodes, edges, root=2, subdiv=2)
-    body = dec_to(body, L(d, 940, 330, 130), symmetric=True)
+    body = dec_to(body, L(d, 880, 280, 116), symmetric=True)
     shoulder = lambda p: p[1] > 0.9 and 0.08 < abs(p[0]) < 0.26  # noqa: E731
     arms = lambda p: arm_side(p) != 0  # noqa: E731
     legs = lambda p: abs(p[0]) < 0.25  # noqa: E731
@@ -1358,7 +1400,7 @@ def build_hair_sidepart_capped(d):
     """Side-swoop worn under a cap: no crown shell/top waves; side + back volume stay."""
     parts = [hair_shell(d, 'hair', top_cut=1.515, back=1.38)]
     locks = sidepart_locks()
-    keep = [3, 4, 5, 6, 7] if d < 2 else [6]
+    keep = [3, 5, 6, 7] if d < 2 else [6]
     for i in keep:
         pts, rad = locks[i]
         t = tube(f'clock{i}', pts, rad, res=8, sides=3)
@@ -1388,7 +1430,7 @@ def build_hair_crew(d, capped=False):
 
 def build_cap(d):
     """Original COLORFRONT cap: team crown, ivory front panel, brim angled ~28 deg to the right."""
-    crown = ellipsoid('cap_crown', (0, 1.43, -0.005), (0.229, 0.218, 0.214), L(d, (28, 14), (12, 7), (8, 5)))
+    crown = ellipsoid('cap_crown', (0, 1.43, -0.005), (0.229, 0.218, 0.214), L(d, (26, 13), (10, 6), (8, 5)))
     bm = bmesh.new()
     bm.from_mesh(crown.data)
     kill = [v for v in bm.verts if to_runtime(v.co)[1] < 1.505 - 0.09 * max(0.0, to_runtime(v.co)[2])]
@@ -1494,8 +1536,6 @@ def build_hardshell(d):
             sx = -1 if side == 'L' else 1
             acc.append(finish(torus('cuff', (w[0], w[1], 0), 0.054, 0.054, 0.016,
                                     axis=(sx * math.sin(ARM_ANGLE), -math.cos(ARM_ANGLE), 0), segs=L(d, (14, 5), (8, 4))), 'rubber'))
-    if d == 0:
-        acc.append(finish(rbox('chestpocket', (0.07, 0.985, -0.123), (0.07, 0.07, 0.018), bevel=0.6, segs=1), 'team_d', sharp=50))
     for a in acc:
         transfer_weights(hull, a)
     return join([hull] + acc, 'top_hardshell')
@@ -1523,7 +1563,8 @@ def build_shorts(d):
     heat_weights(hull, ARM_REF, SKEL)
     acc = []
     for sx in (-1, 1):
-        acc.append(finish(torus('hem', (sx * 0.095, 0.472, 0), 0.09, 0.09, 0.012, segs=L(d, (18, 4), (8, 3), (6, 3))), 'team'))
+        if d < 2:
+            acc.append(finish(torus('hem', (sx * 0.095, 0.472, 0), 0.09, 0.09, 0.012, segs=L(d, (14, 3), (6, 3))), 'team'))
     if d == 0:
         for sx in (-1, 1):
             acc.append(finish(rbox('spocket', (sx * 0.18, 0.62, 0.0), (0.03, 0.08, 0.085), bevel=0.6, segs=1), 'slate_d', sharp=50))
@@ -1549,16 +1590,361 @@ def build_wardrobe(d):
     out['shoes_runner'] = [named(build_shoes(d), 'shoes')]
     out['hair_sidepart'] = [named(build_hair(d), 'hair'), named(build_hair_sidepart_capped(d), 'hair_capped')]
     out['hair_crew'] = [named(build_hair_crew(d), 'hair'), named(build_hair_crew(d, capped=True), 'hair_capped')]
+    out['hair_ponytail'] = [named(build_hair_ponytail(d), 'hair'), named(build_hair_ponytail(d, capped=True), 'hair_capped')]
+    out['hair_buzz'] = [named(build_hair_buzz(d), 'hair'), named(build_hair_buzz(d, capped=True), 'hair_capped')]
     out['headwear_cap'] = [named(build_cap(d), 'headwear')]
+    out['headwear_beanie'] = [named(build_beanie(d), 'headwear')]
+    out['face_goggles'] = [named(build_goggles(d), 'face')]
+    out['face_glasses'] = [named(build_glasses(d), 'face')]
+    out['neck_scarf'] = [named(build_scarf(d), 'neck')]
+    out['neck_headphones'] = [named(build_headphones(d), 'neck')]
+    out['top_tee'] = [named(build_tee(d), 'top')]
+    out['top_hoodie'] = [named(build_hoodie(d), 'top')]
+    out['bottom_jogger'] = [named(build_jogger(d), 'bottom')]
+    out['shoes_boots'] = [named(build_boots(d), 'shoes')]
     out['back_tank_standard'] = [named(build_tank(d), 'back')]
+    out['back_tank_twin'] = [named(build_tank_twin(d), 'back')]
     out['paint_rifle'] = [named(build_gun(d), 'weapon')]
+    out['weapon_shotgun'] = [named(build_shotgun(d), 'weapon')]
+    out['weapon_smg'] = [named(build_smg(d), 'weapon')]
+    out['weapon_sniper'] = [named(build_sniper(d), 'weapon')]
     for objs in out.values():
         for o in objs:
             limit_normalize(o)
     return out
 
 
-WARDROBE_FOLDER = {'courier_base': 'characters', 'paint_rifle': 'weapons'}
+WARDROBE_FOLDER = {'courier_base': 'characters', 'paint_rifle': 'weapons', 'weapon_shotgun': 'weapons',
+                   'weapon_smg': 'weapons', 'weapon_sniper': 'weapons'}
+
+
+# ── wardrobe expansion (hair, headwear, face/neck accessories, tops, bottoms, boots, gear, guns) ──
+def build_hair_ponytail(d, capped=False):
+    """High ponytail with a side-swept fringe and a team-colour hair tie."""
+    parts = [hair_shell(d, 'hair', front=1.49, back=1.34, top_cut=1.515 if capped else None)]
+    res = L(d, 7, 4, 2)
+    if not capped:
+        fringe = [(0.08, 1.6, -0.12), (-0.02, 1.588, -0.2), (-0.13, 1.535, -0.204), (-0.205, 1.465, -0.135)]
+        t = tube('fringe', fringe, [0.056, 0.05, 0.034, 0.008], res=res, sides=L(d, 2, 1, 1))
+        parts.append(finish(dec_to(t, B('lock', d)), 'hair'))
+    tail = [(0.0, 1.5, 0.205), (0.0, 1.47, 0.285), (0.012, 1.39, 0.31), (0.03, 1.31, 0.285)]
+    t = tube('ponytail', tail, [0.05, 0.06, 0.046, 0.01], res=res, sides=L(d, 2, 1, 1))
+    parts.append(finish(dec_to(t, B('lock', d) + 30), 'hair'))
+    if d < 2:
+        parts.append(finish(torus('tie', (0, 1.497, 0.21), 0.034, 0.034, 0.012, axis=(0, 0.35, 1), segs=L(d, (12, 4), (8, 3))), 'team'))
+    h = join(parts, 'hair_capped' if capped else 'hair')
+    rigid_weights(h, 'head')
+    return h
+
+
+def build_hair_buzz(d, capped=False):
+    """Very short buzz cut: a close shell with a crisp hairline."""
+    h = hair_shell(d, 'hair', front=1.53, back=1.3, top_cut=1.515 if capped else None, scale=1.035)
+    h.name = 'hair_capped' if capped else 'hair'
+    rigid_weights(h, 'head')
+    return h
+
+
+def build_beanie(d):
+    crown = ellipsoid('beanie', (0, 1.445, -0.004), (0.224, 0.228, 0.212), L(d, (22, 11), (10, 6), (8, 4)))
+    bm = bmesh.new()
+    bm.from_mesh(crown.data)
+    kill = [v for v in bm.verts if to_runtime(v.co)[1] < 1.475 - 0.08 * max(0.0, to_runtime(v.co)[2])]
+    bmesh.ops.delete(bm, geom=kill, context='VERTS')
+    bm.to_mesh(crown.data)
+    bm.free()
+    sol = crown.modifiers.new('sol', 'SOLIDIFY')
+    sol.thickness = 0.012
+    sol.offset = 1
+    crown = bake(crown)
+    parts = [finish(crown, 'team_d')]
+    parts.append(finish(torus('fold', (0, 1.49, -0.002), 0.226, 0.212, 0.024, axis=(0, 1, -0.14), segs=L(d, (24, 4), (12, 3), (8, 3))), 'ivory'))
+    if d == 0:
+        parts.append(finish(ellipsoid('pompom', (0, 1.675, 0.0), (0.045, 0.04, 0.045), L(d, (10, 6), (6, 4))), 'team'))
+    b = join(parts, 'headwear')
+    rigid_weights(b, 'head')
+    return b
+
+
+def build_goggles(d):
+    """Sport visor shades wrapped across the eyes (strap hidden under the hair)."""
+    lens = rbox('lens', (0, 1.392, -0.2), (0.27, 0.07, 0.03), bevel=L(d, 0.8, 0.4, 0), segs=1,
+                taper=lambda x, y, z: (x, y * (1 - 0.6 * x * x / 0.02), z + 1.6 * x * x))
+    parts = [finish(lens, 'lens', sharp=60)]
+    frame = rbox('frame', (0, 1.43, -0.198), (0.24, 0.016, 0.03), bevel=0.4, segs=1,
+                 taper=lambda x, y, z: (x, y, z + 1.6 * x * x))
+    if d < 2:
+        parts.append(finish(frame, 'team', sharp=50))
+    if d == 0:
+        parts.append(finish(torus('gstrap', (0, 1.4, 0.0), 0.212, 0.196, 0.007, segs=L(d, (24, 3), (12, 3))), 'rubber'))
+    g = join(parts, 'face')
+    rigid_weights(g, 'head')
+    return g
+
+
+def build_glasses(d):
+    """Round metal glasses (frames only, the eyes stay readable)."""
+    parts = []
+    for sx in ((-1, 1) if d < 2 else ()):
+        parts.append(finish(torus('rim', (sx * 0.072, 1.386, -0.2), 0.044, 0.044, 0.0055, axis=(0, 0, 1), segs=L(d, (12, 3), (6, 3), (4, 3))), 'metal'))
+        if d == 0:
+            parts.append(finish(tube('temple', [(sx * 0.115, 1.392, -0.19), (sx * 0.19, 1.395, -0.11), (sx * 0.208, 1.39, -0.02)],
+                                     [0.005] * 3, res=2, sides=0), 'metal'))
+    parts.append(finish(cylinder('bridge', (-0.028, 1.392, -0.205), (0.028, 1.392, -0.205), 0.005, segs=5), 'metal'))
+    g = join(parts, 'face')
+    rigid_weights(g, 'head')
+    return g
+
+
+def build_scarf(d):
+    ring = torus('scarf', (0, 1.125, 0.004), 0.096, 0.09, 0.032, axis=(0, 1, -0.25), segs=L(d, (16, 5), (10, 3), (6, 3)))
+    parts = [finish(ring, 'team')]
+    if d == 0:
+        tail = [(-0.05, 1.11, -0.095), (-0.07, 1.02, -0.13), (-0.075, 0.92, -0.128)]
+        parts.append(finish(tube('tail', tail, [0.036, 0.034, 0.03], res=3, sides=6, flat=0.32), 'team'))
+        parts.append(finish(rbox('fringe', (-0.075, 0.9, -0.128), (0.06, 0.02, 0.014), bevel=0, segs=1), 'ivory'))
+    s = join(parts, 'neck')
+    rigid_weights(s, 'chest')
+    return s
+
+
+def build_headphones(d):
+    parts = []
+    for sx in (-1, 1):
+        cup = cylinder('cup', (sx * 0.085, 1.14, -0.03), (sx * 0.12, 1.14, -0.03), 0.045, segs=L(d, 8, 6, 5))
+        parts.append(finish(cup, 'graphite', sharp=40))
+        if d == 0:
+            parts.append(finish(torus('ledring', (sx * 0.121, 1.14, -0.03), 0.03, 0.03, 0.006, axis=(1, 0, 0), segs=L(d, (12, 3), (8, 3))), 'led'))
+    band = [(-0.1, 1.15, 0.0), (-0.075, 1.17, 0.075), (0.075, 1.17, 0.075), (0.1, 1.15, 0.0)]
+    if d < 2:
+        parts.append(finish(tube('band', band, [0.012] * 4, res=L(d, 3, 2), sides=0), 'rubber'))
+    h = join(parts, 'neck')
+    rigid_weights(h, 'chest')
+    return h
+
+
+def tee_rule(p, n, poly):
+    if arm_side(p):
+        return 'team'
+    if p[1] < 0.825:
+        return 'team_d'
+    return 'graphite_l'
+
+
+def build_tee(d):
+    """Short-sleeve tee: forearms (base body) stay visible; only the torso is hidden."""
+    nodes = [((0, 0.8, 0.0), (0.142, 0.11)), ((0, 0.88, 0.0), (0.13, 0.1)), ((0, 0.99, 0.0), (0.152, 0.113)),
+             ((0, 1.075, 0.0), (0.138, 0.104)), ((0, 1.135, 0.0), (0.07, 0.064))]
+    edges = [(0, 1), (1, 2), (2, 3), (3, 4)]
+    for side in ('L', 'R'):
+        sx = -1 if side == 'L' else 1
+        b = len(nodes)
+        nodes += [((sx * 0.16, 1.09, 0.0), (0.068, 0.068)), ((*arm_point(side, 0.16), 0.0), (0.06, 0.06))]
+        edges += [(3, b), (b, b + 1)]
+    hull = skin_body('tee', nodes, edges, root=2, subdiv=2)
+    hull = dec_to(hull, L(d, 640, 230, 90), symmetric=True)
+    torso = lambda p: abs(p[0]) < 0.19  # noqa: E731
+    cut(hull, [(co, no, lambda p: p[1] > 0.9 and 0.08 < abs(p[0]) < 0.26) for co, no in SLEEVE_PLANES] +
+        [((0, 0.825, 0), (0, 1, 0), torso)])
+    finish(hull, rule=tee_rule)
+    heat_weights(hull, ARM_REF, SKEL)
+    acc = []
+    if d < 2:
+        acc.append(finish(torus('teecollar', (0, 1.14, 0.004), 0.074, 0.068, 0.014, axis=(0, 1, -0.3), segs=L(d, (18, 4), (10, 3))), 'team_d'))
+        cpos = (0.0, 0.99, -0.118)
+        patch = cylinder('teepatch', (cpos[0], cpos[1], cpos[2] + 0.008), (cpos[0], cpos[1], cpos[2] - 0.006), 0.05, segs=L(d, 16, 8))
+
+        def emblem_rule(p, n, poly):
+            if n[2] < -0.5:
+                return lambda q: emblem_uv(0.5 + q[0] / 0.105, 0.5 + (q[1] - cpos[1]) / 0.105)
+            return 'team_d'
+        acc.append(finish(patch, rule=emblem_rule, smooth=False))
+    for a in acc:
+        transfer_weights(hull, a)
+    return join([hull] + acc, 'top')
+
+
+def hoodie_rule(p, n, poly):
+    if arm_side(p):
+        return 'graphite_l'
+    if p[1] < 0.84:
+        return 'team_d'
+    return 'graphite_l'
+
+
+def build_hoodie(d):
+    nodes = [((0, 0.78, 0.0), (0.152, 0.118)), ((0, 0.88, 0.0), (0.142, 0.11)), ((0, 0.99, 0.0), (0.162, 0.122)),
+             ((0, 1.075, 0.0), (0.146, 0.112)), ((0, 1.135, 0.0), (0.08, 0.072))]
+    edges = [(0, 1), (1, 2), (2, 3), (3, 4)]
+    for side in ('L', 'R'):
+        sx = -1 if side == 'L' else 1
+        b = len(nodes)
+        e = arm_point(side, 0.24)
+        nodes += [((sx * 0.165, 1.09, 0.0), (0.076, 0.076)), ((*arm_point(side, 0.11), 0.0), (0.072, 0.072)),
+                  ((e[0], e[1], 0.0), (0.064, 0.064)), ((*arm_point(side, 0.36), 0.0), (0.061, 0.061)),
+                  ((*arm_point(side, 0.445), 0.0), (0.056, 0.056))]
+        edges += [(3, b), (b, b + 1), (b + 1, b + 2), (b + 2, b + 3), (b + 3, b + 4)]
+    hull = skin_body('hoodie', nodes, edges, root=2, subdiv=2)
+    hull = dec_to(hull, B('jacket', d), symmetric=True)
+    cut(hull, [((0, 0.84, 0), (0, 1, 0), lambda p: abs(p[0]) < 0.19)])
+    finish(hull, rule=hoodie_rule)
+    heat_weights(hull, ARM_REF, SKEL)
+    acc = [finish(ellipsoid('hood', (0, 1.165, 0.085), (0.13, 0.075, 0.075), L(d, (14, 8), (10, 6), (6, 4))), 'graphite_l')]
+    if d < 2:
+        acc.append(finish(rbox('kangaroo', (0, 0.9, -0.118), (0.17, 0.08, 0.02), bevel=0.6, segs=1, taper=lambda x, y, z: (x, y, z + 0.8 * x * x)), 'graphite', sharp=50))
+        for sx in (-1, 1):
+            acc.append(finish(tube('string', [(sx * 0.035, 1.12, -0.085), (sx * 0.038, 1.06, -0.12), (sx * 0.036, 1.0, -0.124)], [0.006] * 3, res=2, sides=0), 'team'))
+        for side in ('L', 'R'):
+            w = arm_point(side, 0.45)
+            sx = -1 if side == 'L' else 1
+            acc.append(finish(torus('hcuff', (w[0], w[1], 0), 0.054, 0.054, 0.016, axis=(sx * math.sin(ARM_ANGLE), -math.cos(ARM_ANGLE), 0), segs=L(d, (14, 5), (8, 4))), 'team_d'))
+    for a in acc:
+        transfer_weights(hull, a)
+    return join([hull] + acc, 'top')
+
+
+def build_jogger(d):
+    nodes = [((0, 0.83, 0.0), (0.132, 0.102)), ((0, 0.72, 0.0), (0.14, 0.106))]
+    edges = [(0, 1)]
+    for side in ('L', 'R'):
+        sx = -1 if side == 'L' else 1
+        b = len(nodes)
+        nodes += [((sx * 0.086, 0.64, 0.0), (0.084, 0.084)), ((sx * 0.09, 0.5, 0.0), (0.075, 0.075)),
+                  ((sx * 0.093, 0.37, 0.0), (0.063, 0.065)), ((sx * 0.096, 0.23, 0.0), (0.057, 0.057)),
+                  ((sx * 0.098, 0.12, 0.0), (0.052, 0.052))]
+        edges += [(1, b), (b, b + 1), (b + 1, b + 2), (b + 2, b + 3), (b + 3, b + 4)]
+    hull = skin_body('jogger', nodes, edges, root=1, subdiv=2)
+    hull = dec_to(hull, L(d, 600, 220, 90), symmetric=True)
+    # Team side stripe on the outer face of each leg (by normal; the hull is fine enough).
+    finish(hull, rule=lambda p, n, poly: 'team' if abs(n[0]) > 0.86 and p[1] < 0.66 and p[0] * n[0] > 0 else 'slate_d')
+    heat_weights(hull, ARM_REF, SKEL)
+    acc = []
+    if d < 2:
+        for sx in (-1, 1):
+            acc.append(finish(torus('jcuff', (sx * 0.098, 0.115, 0), 0.054, 0.054, 0.013, segs=L(d, (14, 4), (8, 3))), 'rubber'))
+    for a in acc:
+        transfer_weights(hull, a)
+    return join([hull] + acc, 'bottom')
+
+
+def boot_weights(side):
+    def fn(p):
+        y = p[1]
+        if y >= 0.13:
+            return {'shin' + side: 1.0}
+        if y <= 0.08:
+            return {'foot' + side: 1.0}
+        t = (y - 0.08) / 0.05
+        return {'foot' + side: 1 - t, 'shin' + side: t}
+    return fn
+
+
+def build_boots(d):
+    out = []
+    for side in ('L', 'R'):
+        sx = -1 if side == 'L' else 1
+        cx = sx * 0.103
+        parts = []
+        shaft = cylinder('shaft', (cx, 0.06, 0.005), (cx, 0.225, 0.0), 0.078, 0.074, segs=L(d, 12, 8, 6), caps=False)
+        parts.append(finish(shaft, 'graphite', sharp=60))
+        up = rbox('bootfoot', (cx, 0.075, -0.045), (0.13, 0.1, 0.26), bevel=L(d, 0.9, 0.6, 0.2), segs=L(d, 2, 1, 1),
+                  taper=lambda x, y, z: (x, y - (max(0.0, -z) / 0.13) * 0.03 * (y > 0), z))
+        parts.append(finish(up, 'graphite'))
+        parts.append(finish(rbox('bootsole', (cx, 0.022, -0.045), (0.142, 0.044, 0.28), bevel=L(d, 0.8, 0), segs=1), 'rubber', sharp=45))
+        if d == 0:
+            parts.append(finish(torus('rim', (cx, 0.222, 0.0), 0.076, 0.076, 0.012, segs=L(d, (14, 4), (8, 3))), 'team'))
+            for i in range(L(d, 3, 2)):
+                parts.append(finish(rbox('blace', (cx, 0.13 + i * 0.03, -0.075), (0.05, 0.01, 0.012), bevel=0, segs=1), 'ivory'))
+        b = join(parts, f'boot{side}')
+        rule_weights(b, boot_weights(side))
+        out.append(b)
+    return join(out, 'shoes')
+
+
+def build_tank_twin(d):
+    """Twin-tube paint pack: same ammo read-out (both liquids on the liquid joint), new silhouette."""
+    parts = [finish(rbox('twinplate', (0, 0.985, 0.16), (0.21, 0.3, 0.045), bevel=L(d, 0.7, 0.6, 0), segs=1), 'graphite_l', sharp=40)]
+    for y in (0.785, 1.175):
+        parts.append(finish(rbox('twinbar', (0, y, 0.21), (0.21, 0.03, 0.1), bevel=L(d, 0.5, 0), segs=1), 'ivory', sharp=40))
+    if d == 0:
+        parts.append(finish(rbox('twinled', (0, 1.195, 0.215), (0.12, 0.012, 0.02), bevel=0, segs=1), 'led'))
+        for sx in (-1, 1):
+            st = [(sx * 0.07, 1.12, 0.14), (sx * 0.1, 1.185, 0.03), (sx * 0.095, 1.13, -0.13), (sx * 0.085, 1.0, -0.14)]
+            parts.append(finish(tube('strap', st, [0.024] * 4, res=3, sides=6, flat=0.28), 'strap'))
+    frame = join(parts, 'twin_frame')
+    rigid_weights(frame, 'chest')
+    glass = []
+    liquid = []
+    for sx in (-1, 1):
+        g = cylinder('tglass', (sx * 0.055, 0.8, 0.215), (sx * 0.055, 1.16, 0.215), 0.045, segs=L(d, 12, 8, 5))
+        glass.append(finish(g, 'glass', mat=1))
+        lq = cylinder('tliquid', (sx * 0.055, 0.805, 0.215), (sx * 0.055, 1.15, 0.215), 0.037, segs=L(d, 10, 6, 5))
+        liquid.append(finish(lq, 'liquid'))
+    g = join(glass, 'twin_glass')
+    rigid_weights(g, 'chest')
+    lq = join(liquid, 'twin_liquid')
+    rigid_weights(lq, 'liquid')
+    return join([frame, g, lq], 'back')
+
+
+def gun_parts(name, d, pieces):
+    ox, oy, oz = GUN_ORIGIN
+    parts = []
+    for kind, args, cell, sharp in pieces:
+        if kind == 'box':
+            c, size, bevel = args
+            o = rbox(name, (ox + c[0], oy + c[1], oz + c[2]), size, bevel=L(d, bevel, bevel, 0), segs=1)
+        else:
+            a, b, r1, r2, segs = args
+            o = cylinder(name, (ox + a[0], oy + a[1], oz + a[2]), (ox + b[0], oy + b[1], oz + b[2]), r1, r2, segs=L(d, segs, max(6, segs // 2), 6))
+        parts.append(finish(o, cell, sharp=sharp))
+    g = join(parts, 'weapon')
+    rigid_weights(g, 'gun')
+    return g
+
+
+def build_shotgun(d):
+    """Splash shotgun: chunky body, twin barrels with a wide flared nozzle, pump grip."""
+    pieces = [('box', ((0, 0.0, -0.17), (0.09, 0.1, 0.28), 0.6), 'graphite', 40),
+              ('box', ((0, 0.055, -0.17), (0.07, 0.02, 0.24), 0.4), 'ivory', 40),
+              ('cyl', ((-0.022, 0.03, -0.3), (-0.022, 0.03, -0.53), 0.022, 0.022, 10), 'metal', 50),
+              ('cyl', ((0.022, 0.03, -0.3), (0.022, 0.03, -0.53), 0.022, 0.022, 10), 'metal', 50),
+              ('cyl', ((0, 0.03, -0.51), (0, 0.03, -0.56), 0.05, 0.062, 14), 'team', 50),
+              ('box', ((0, -0.03, -0.38), (0.07, 0.05, 0.1), 0.5), 'rubber', 50),
+              ('box', ((0, -0.075, 0.0), (0.045, 0.1, 0.05), 0.6), 'rubber', 50),
+              ('box', ((0, -0.01, 0.07), (0.055, 0.08, 0.13), 0.6), 'ivory', 40),
+              ('cyl', ((0.058, 0.02, -0.08), (0.058, 0.02, -0.24), 0.026, 0.026, 12), 'team', 50)]
+    pieces = pieces if d == 0 else pieces[:6] if d == 1 else pieces[:3]
+    return gun_parts('sg', d, pieces)
+
+
+def build_smg(d):
+    """Spray SMG: compact body, short barrel, tall team-colour magazine."""
+    pieces = [('box', ((0, 0.0, -0.13), (0.065, 0.085, 0.24), 0.6), 'graphite', 40),
+              ('box', ((0, 0.05, -0.13), (0.05, 0.015, 0.2), 0.4), 'ivory', 40),
+              ('cyl', ((0, 0.02, -0.25), (0, 0.02, -0.43), 0.016, 0.016, 10), 'metal', 50),
+              ('cyl', ((0, 0.02, -0.42), (0, 0.02, -0.45), 0.024, 0.026, 10), 'team_d', 50),
+              ('box', ((0, -0.1, -0.1), (0.04, 0.13, 0.05), 0.4), 'team', 50),
+              ('box', ((0, -0.075, 0.0), (0.04, 0.1, 0.045), 0.6), 'rubber', 50),
+              ('box', ((0, 0.0, 0.06), (0.03, 0.05, 0.1), 0.4), 'ivory', 40)]
+    if d == 2:
+        pieces = pieces[:5]
+    return gun_parts('smg', d, pieces)
+
+
+def build_sniper(d):
+    """Long Liner: long slim body and barrel, top scope with lenses, ivory stock."""
+    pieces = [('box', ((0, 0.0, -0.25), (0.062, 0.08, 0.5), 0.6), 'graphite', 40),
+              ('cyl', ((0, 0.025, -0.5), (0, 0.025, -0.9), 0.015, 0.013, 10), 'metal', 50),
+              ('cyl', ((0, 0.025, -0.89), (0, 0.025, -0.93), 0.022, 0.024, 10), 'team_d', 50),
+              ('cyl', ((0, 0.085, -0.14), (0, 0.085, -0.36), 0.022, 0.022, 12), 'graphite_l', 50),
+              ('cyl', ((0, 0.085, -0.36), (0, 0.085, -0.375), 0.025, 0.025, 12), 'lens', 50),
+              ('box', ((0, -0.075, 0.0), (0.04, 0.1, 0.045), 0.6), 'rubber', 50),
+              ('box', ((0, -0.015, 0.09), (0.05, 0.09, 0.18), 0.6), 'ivory', 40),
+              ('box', ((0, 0.045, -0.25), (0.05, 0.012, 0.3), 0.3), 'team', 40)]
+    if d == 2:
+        pieces = pieces[:4]
+    return gun_parts('sn', d, pieces)
 
 
 # ── scene / build ────────────────────────────────────────────────────────────────────────────────
@@ -1814,11 +2200,13 @@ def main():
             for o in objs:
                 o.hide_set(True)
                 o.hide_render = True
-    # Runtime team swap textures (orange atlas + emissive) next to the GLBs.
-    import shutil
-    for kind in ('atlas', 'emissive'):
-        shutil.copy(paths[(kind, 'orange')], os.path.join(OUT_CHAR, f'courier_{kind}_orange.png'))
-        shutil.copy(paths[(kind, 'blue')], os.path.join(OUT_CHAR, f'courier_{kind}_blue.png'))
+    # One shared atlas (embedded in courier_base_lod0.glb): per-team PNGs are no longer used.
+    for f in os.listdir(OUT_CHAR):
+        if f.endswith('.png'):
+            os.remove(os.path.join(OUT_CHAR, f))
+    for f in os.listdir(TEX):
+        if f.endswith(('_blue.png', '_orange.png')):
+            os.remove(os.path.join(TEX, f))
     # Hide wardrobe-only copies in the master file view; keep LOD1/2 hidden by default.
     for name, (_, obj) in items.items():
         obj.hide_set(True)

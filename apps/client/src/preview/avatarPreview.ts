@@ -222,7 +222,7 @@ async function main() {
         pose = v as PoseName;
         clock = 0;
     });
-    const stats = lib.triangles(DEFAULT_APPEARANCE);
+    const stats = lib.triangles({ appearance: DEFAULT_APPEARANCE, team: 'blue', weapon: 'paint-rifle' });
     status.textContent = `GLB 로드 ${loadMs} ms · 삼각형 LOD0/1/2 = ${stats.join(' / ')}`;
 
     // Automation hooks (Playwright captures).

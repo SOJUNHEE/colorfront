@@ -1,7 +1,17 @@
-import { OUTFIT_PRESETS, SLOT_FIELD, WARDROBE_ITEMS, WARDROBE_SLOTS, appearanceKey, withItem } from '@colorfront/shared';
-import type { AvatarAppearance, WardrobeSlot } from '@colorfront/shared';
+import {
+    COLOR_CHOICES,
+    COLOR_FIELDS,
+    OUTFIT_PRESETS,
+    SLOT_FIELD,
+    WARDROBE_ITEMS,
+    WARDROBE_SLOTS,
+    appearanceKey,
+    withColor,
+    withItem
+} from '@colorfront/shared';
+import type { AvatarAppearance, ColorChoice, WardrobeSlot } from '@colorfront/shared';
 
-import { SLOT_LABELS, WARDROBE_CATALOG } from '../avatar/catalog.ts';
+import { COLOR_LABELS, NONE_LABEL, SLOT_LABELS, WARDROBE_CATALOG } from '../avatar/catalog.ts';
 
 /**
  * "아바타 꾸미기" panel. Pure UI: it edits an appearance and reports changes; the game previews
@@ -61,7 +71,9 @@ export class WardrobePanel {
             b.addEventListener('click', () => this.set({ ...p.appearance }));
             this.presets.append(b);
         }
+        for (const field of COLOR_FIELDS) this.slots.append(this.colorRow(field));
         for (const slot of WARDROBE_SLOTS) {
+            if (WARDROBE_ITEMS[slot].length < 2) continue; // nothing to choose (e.g. weapon skin)
             const sec = document.createElement('section');
             sec.className = 'wardrobe-section';
             const h = document.createElement('h2');
@@ -73,7 +85,7 @@ export class WardrobePanel {
                 const b = document.createElement('button');
                 b.type = 'button';
                 b.className = 'chip';
-                b.textContent = WARDROBE_CATALOG[id]?.label ?? id;
+                b.textContent = (id === 'none' ? NONE_LABEL[slot as WardrobeSlot] : undefined) ?? WARDROBE_CATALOG[id]?.label ?? id;
                 b.dataset.item = id;
                 b.addEventListener('click', () => this.set(withItem(this.current, slot as WardrobeSlot, id)));
                 row.append(b);
@@ -131,8 +143,38 @@ export class WardrobePanel {
         this.onChange?.({ ...a });
     }
 
+    /** Swatch row for a colour choice (hair colour, skin tone, outfit colour). */
+    private colorRow(field: ColorChoice): HTMLElement {
+        const meta = COLOR_LABELS[field];
+        const sec = document.createElement('section');
+        sec.className = 'wardrobe-section';
+        const h = document.createElement('h2');
+        h.textContent = meta.title;
+        const row = document.createElement('div');
+        row.className = 'wardrobe-row swatches';
+        row.dataset.color = field;
+        for (const value of COLOR_CHOICES[field]) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'swatch';
+            b.dataset.value = value;
+            const name = (meta.names as Record<string, string>)[value] ?? value;
+            b.title = name;
+            b.setAttribute('aria-label', `${meta.title}: ${name}`);
+            b.style.setProperty('--swatch', (meta.swatch as Record<string, string>)[value] ?? '#888');
+            b.addEventListener('click', () => this.set(withColor(this.current, field, value)));
+            row.append(b);
+        }
+        sec.append(h, row);
+        return sec;
+    }
+
     private render() {
-        for (const row of this.slots.querySelectorAll<HTMLElement>('.wardrobe-row')) {
+        for (const row of this.slots.querySelectorAll<HTMLElement>('.wardrobe-row[data-color]')) {
+            const field = row.dataset.color as ColorChoice;
+            for (const b of row.querySelectorAll<HTMLButtonElement>('button')) b.setAttribute('aria-pressed', String(b.dataset.value === this.current[field]));
+        }
+        for (const row of this.slots.querySelectorAll<HTMLElement>('.wardrobe-row[data-slot]')) {
             const slot = row.dataset.slot as WardrobeSlot;
             const id = this.current[SLOT_FIELD[slot]];
             for (const b of row.querySelectorAll<HTMLButtonElement>('button')) b.setAttribute('aria-pressed', String(b.dataset.item === id));

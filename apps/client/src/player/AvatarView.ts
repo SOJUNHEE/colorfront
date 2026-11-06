@@ -1,5 +1,5 @@
 import { DEFAULT_APPEARANCE } from '@colorfront/shared';
-import type { AvatarAppearance, TeamId } from '@colorfront/shared';
+import type { AvatarAppearance, TeamId, WeaponId } from '@colorfront/shared';
 import { Entity } from 'playcanvas';
 import type { AppBase, Vec3 } from 'playcanvas';
 
@@ -32,6 +32,8 @@ export type AvatarView = {
     celebrate(on: boolean): void;
     /** Optional (GLB avatars): change clothes. Legacy rigs ignore it. */
     setAppearance?(a: AvatarAppearance): Promise<void>;
+    /** Optional (GLB avatars): draw the model of the carried weapon. */
+    setWeapon?(w: WeaponId): void;
 };
 
 export type AvatarKind = 'glb' | 'legacy';
@@ -54,6 +56,7 @@ export class SwitchableAvatar implements AvatarView {
     private celebrating = false;
     kind: AvatarKind;
     appearance: AvatarAppearance;
+    weapon: WeaponId = 'paint-rifle';
 
     constructor(root: Entity, first: AvatarView, kind: AvatarKind, team: TeamId, appearance: AvatarAppearance) {
         this.root = root;
@@ -69,6 +72,7 @@ export class SwitchableAvatar implements AvatarView {
         const old = this.inner;
         next.root.reparent(this.root);
         next.setTeam(this.team);
+        next.setWeapon?.(this.weapon);
         next.celebrate(this.celebrating);
         // Keep the pose until the next update() so the swap never shows a T/A-pose frame.
         next.root.setPosition(old.root.getPosition());
@@ -114,6 +118,11 @@ export class SwitchableAvatar implements AvatarView {
     celebrate(on: boolean) {
         this.celebrating = on;
         this.inner.celebrate(on);
+    }
+
+    setWeapon(w: WeaponId) {
+        this.weapon = w;
+        this.inner.setWeapon?.(w);
     }
 
     /** Remembered for a later legacy -> GLB upgrade; applied now if the view supports it. */

@@ -621,6 +621,8 @@ export class Game {
             const camDist = Math.hypot(x - cam.x, y - cam.y, z - cam.z);
             if (online && a.net) a.rig.setVisible(s.alive);
             if (!s.alive) continue;
+            // The drawn gun follows the carried weapon (others can tell what you hold).
+            a.rig.setWeapon?.(s.weaponId);
             a.rig.update(
                 dt,
                 {
@@ -774,7 +776,7 @@ export class Game {
             );
             return;
         }
-        const t = lib.triangles(this.wardrobe.appearance);
+        const t = lib.triangles({ appearance: this.wardrobe.appearance, team: this.local.state.team, weapon: this.local.state.weaponId });
         this.wardrobe.setInfo(t[0] ? `삼각형 LOD0/1/2 ${t.join(' / ')} · 드로우콜 2` : '의상 불러오는 중…');
     }
 

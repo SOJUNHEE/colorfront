@@ -52,6 +52,21 @@ WARDROBE = {
     'clothes/headwear_cap': (['headwear'], (1100, 500, 200)),
     'clothes/back_tank_standard': (['back'], (1000, 400, 200)),
     'weapons/paint_rifle': (['weapon'], (600, 400, 200)),
+    'weapons/weapon_shotgun': (['weapon'], (600, 400, 200)),
+    'weapons/weapon_smg': (['weapon'], (600, 400, 200)),
+    'weapons/weapon_sniper': (['weapon'], (600, 400, 200)),
+    'clothes/hair_ponytail': (['hair', 'hair_capped'], (3000, 1100, 400)),
+    'clothes/hair_buzz': (['hair', 'hair_capped'], (3000, 1100, 400)),
+    'clothes/headwear_beanie': (['headwear'], (1100, 500, 200)),
+    'clothes/face_goggles': (['face'], (600, 300, 120)),
+    'clothes/face_glasses': (['face'], (600, 300, 120)),
+    'clothes/neck_scarf': (['neck'], (600, 300, 120)),
+    'clothes/neck_headphones': (['neck'], (600, 300, 120)),
+    'clothes/top_tee': (['top'], (2200, 900, 400)),
+    'clothes/top_hoodie': (['top'], (2200, 900, 400)),
+    'clothes/bottom_jogger': (['bottom'], (1300, 500, 250)),
+    'clothes/shoes_boots': (['shoes'], (1200, 450, 250)),
+    'clothes/back_tank_twin': (['back'], (1000, 500, 200)),
 }
 for _name, (_nodes, _caps) in WARDROBE.items():
     for _lod in range(3):

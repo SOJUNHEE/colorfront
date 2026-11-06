@@ -1,10 +1,11 @@
 import { DEFAULT_APPEARANCE, appearanceKey } from '@colorfront/shared';
-import type { AvatarAppearance, TeamId } from '@colorfront/shared';
+import type { AvatarAppearance, TeamId, WeaponId } from '@colorfront/shared';
 import { Entity, MeshInstance, Quat, SkinInstance, Vec3 } from 'playcanvas';
 import type { AppBase } from 'playcanvas';
 
+import { WEAPON_MODELS } from '../avatar/catalog.ts';
 import { LOD_COUNT } from '../avatar/library.ts';
-import type { AvatarLibrary, OutfitMeshes } from '../avatar/library.ts';
+import type { AvatarLibrary, OutfitKey, OutfitMeshes } from '../avatar/library.ts';
 
 import type { AvatarView, RigPose } from './AvatarView.ts';
 
@@ -16,12 +17,12 @@ export { AvatarLibrary } from '../avatar/library.ts';
  * Contract with the GLBs (checked by assets-src/blender/scripts/validate_avatar.py):
  *  - 22 joints named like CharacterRig.ts, identity rest rotations, metres, +Y up, facing -Z;
  *  - arms are bound in an A-pose, so arm IK reads each bone's rest direction from the skeleton;
- *  - `muzzle` node under `gun`; `liquid` joint scales the tank fill (ammo).
+ *  - `gun` joint carries the weapon model; `liquid` joint scales the tank fill (ammo).
  *
- * Wardrobe (Gate 3): the drawn mesh of each LOD is the merged outfit from AvatarLibrary (one opaque
- * + one glass mesh, shared with every avatar wearing the same outfit). Changing clothes swaps the
- * mesh of the existing mesh instances; the skeleton, skin instance and animation state stay.
- * Each avatar owns its skeleton entities and ONE skin instance shared by all its mesh instances.
+ * The drawn mesh of each LOD is the merged look from AvatarLibrary: outfit + colours + team +
+ * carried weapon (one opaque + one glass mesh, shared with every avatar that looks the same).
+ * Changing clothes, team or weapon swaps the mesh of the existing mesh instances; the skeleton,
+ * skin instance and animation state stay. Each avatar owns its skeleton and ONE skin instance.
  */
 
 const DOWN = new Vec3(0, -1, 0);
@@ -36,11 +37,11 @@ export class GlbAvatar implements AvatarView {
     private readonly hasGlass: boolean[] = [];
     private readonly held: (OutfitMeshes | null)[] = [];
     private readonly skinInstance: SkinInstance;
-    private readonly muzzleNode: Entity | null;
-    private team: TeamId;
     private lod = -1;
-    private appearance: AvatarAppearance;
-    private wanted = '';
+    /** What is drawn now, and what was asked for last (may still be loading). */
+    private shown: OutfitKey;
+    private wanted: OutfitKey;
+    private wantedId = '';
     private destroyed = false;
 
     // Animation state (same model as the legacy CharacterRig, tuned for the new proportions).
@@ -58,12 +59,9 @@ export class GlbAvatar implements AvatarView {
     private readonly tmpV = new Vec3();
     private readonly tmpV2 = new Vec3();
 
-    constructor(app: AppBase, lib: AvatarLibrary, team: TeamId, appearance: AvatarAppearance = DEFAULT_APPEARANCE) {
+    constructor(app: AppBase, lib: AvatarLibrary, team: TeamId, appearance: AvatarAppearance = DEFAULT_APPEARANCE, weapon: WeaponId = 'paint-rifle') {
         this.lib = lib;
-        this.team = team;
-        this.appearance = { ...appearance };
         this.root = new Entity('avatar');
-        // Own copy of the skeleton (plain entities, no render components).
         const inst = lib.skeleton.clone() as Entity;
         this.root.addChild(inst);
         const walk = (e: Entity) => {
@@ -72,7 +70,6 @@ export class GlbAvatar implements AvatarView {
             for (const c of e.children) walk(c as Entity);
         };
         walk(inst);
-        this.muzzleNode = this.bones.get('muzzle') ?? null;
         const rootBone = this.bones.get('root') ?? inst;
         this.skinInstance = new SkinInstance(lib.skin);
         this.skinInstance.bones = lib.skin.boneNames.map((n) => {
@@ -82,14 +79,15 @@ export class GlbAvatar implements AvatarView {
         });
         this.skinInstance.rootBone = rootBone;
 
-        // Start with the requested outfit if it is ready, else the always-ready default.
-        const exact = lib.acquire(this.appearance, 0) !== null;
-        if (exact) lib.release(`${appearanceKey(this.appearance)}#0`);
-        const start = exact ? this.appearance : DEFAULT_APPEARANCE;
+        // Start with the requested look if it is ready, else the always-ready default for the team.
+        this.wanted = { appearance: { ...appearance }, team, weapon };
+        const ready = lib.acquire(this.wanted, 0);
+        if (ready) lib.release(ready.key);
+        this.shown = ready ? this.wanted : { appearance: DEFAULT_APPEARANCE, team, weapon: 'paint-rifle' };
         for (let lod = 0; lod < LOD_COUNT; lod++) {
-            const om = lib.acquire(start, lod)!;
+            const om = lib.acquire(this.shown, lod)!;
             this.held.push(om);
-            const opaque = new MeshInstance(om.opaque, lib.bodyMaterial(team));
+            const opaque = new MeshInstance(om.opaque, lib.body);
             const glass = new MeshInstance(om.glass ?? om.opaque, lib.glass);
             this.hasGlass.push(om.glass !== null);
             for (const mi of [opaque, glass]) mi.skinInstance = this.skinInstance;
@@ -100,7 +98,7 @@ export class GlbAvatar implements AvatarView {
         }
         app.root.addChild(this.root);
         // The render component nulls skinInstance before destroying its mesh instances, so the
-        // manually created skin instance (bone texture) is released here; outfits are un-held.
+        // manually created skin instance (bone texture) is released here; looks are un-held.
         this.root.once('destroy', () => {
             this.destroyed = true;
             this.skinInstance.destroy();
@@ -108,7 +106,7 @@ export class GlbAvatar implements AvatarView {
             this.held.length = 0;
         });
         this.setLod(0);
-        if (!exact) this.setAppearance(this.appearance);
+        if (!ready) void this.request(this.wanted);
     }
 
     get currentLod() {
@@ -116,7 +114,11 @@ export class GlbAvatar implements AvatarView {
     }
 
     get currentAppearance(): AvatarAppearance {
-        return { ...this.appearance };
+        return { ...this.shown.appearance };
+    }
+
+    get currentWeapon(): WeaponId {
+        return this.shown.weapon;
     }
 
     /** Triangles drawn at the current LOD (diagnostics). */
@@ -136,22 +138,31 @@ export class GlbAvatar implements AvatarView {
     }
 
     setTeam(team: TeamId) {
-        if (team === this.team) return;
-        this.team = team;
-        for (const [opaque] of this.lods) opaque.material = this.lib.bodyMaterial(team);
+        if (team === this.wanted.team) return;
+        void this.request({ ...this.wanted, team });
+    }
+
+    setAppearance(a: AvatarAppearance): Promise<void> {
+        return this.request({ ...this.wanted, appearance: { ...a } });
+    }
+
+    setWeapon(weapon: WeaponId) {
+        if (weapon === this.wanted.weapon) return;
+        void this.request({ ...this.wanted, weapon });
     }
 
     /**
-     * Change clothes. Loads/merges the outfit if needed (async), then swaps the meshes of the
-     * existing mesh instances in one frame. The latest request wins.
+     * Load/merge the look if needed (async), then swap the meshes of the existing mesh instances
+     * in one frame. The latest request wins.
      */
-    setAppearance(a: AvatarAppearance): Promise<void> {
-        const key = appearanceKey(a);
-        this.wanted = key;
-        return this.lib.prepare(a).then(
+    private request(k: OutfitKey): Promise<void> {
+        this.wanted = k;
+        const id = `${appearanceKey(k.appearance)}|${k.team}|${k.weapon}`;
+        this.wantedId = id;
+        return this.lib.prepare(k).then(
             () => {
-                if (this.destroyed || this.wanted !== key) return;
-                const next = [0, 1, 2].map((lod) => this.lib.acquire(a, lod)!);
+                if (this.destroyed || this.wantedId !== id) return;
+                const next = [0, 1, 2].map((lod) => this.lib.acquire(k, lod)!);
                 next.forEach((om, lod) => {
                     const [opaque, glass] = this.lods[lod];
                     opaque.mesh = om.opaque;
@@ -160,12 +171,12 @@ export class GlbAvatar implements AvatarView {
                 });
                 for (const h of this.held) if (h) this.lib.release(h.key);
                 this.held.splice(0, this.held.length, ...next);
-                this.appearance = { ...a };
+                this.shown = k;
                 const lod = this.lod;
                 this.lod = -1;
                 this.setLod(lod);
             },
-            (err: unknown) => console.warn('[avatar] outfit unavailable, keeping the current one:', err)
+            (err: unknown) => console.warn('[avatar] look unavailable, keeping the current one:', err)
         );
     }
 
@@ -173,10 +184,10 @@ export class GlbAvatar implements AvatarView {
         this.root.enabled = v;
     }
 
+    /** Nozzle of the drawn weapon model (visual only; shots are traced by the simulation). */
     muzzle(out: Vec3): Vec3 {
-        if (this.muzzleNode) return out.copy(this.muzzleNode.getPosition());
-        const gun = this.bone('gun');
-        gun.getWorldTransform().transformPoint(this.tmpV.set(0, 0.03, -0.64), out);
+        const [x, y, z] = WEAPON_MODELS[this.shown.weapon].muzzle;
+        this.bone('gun').getWorldTransform().transformPoint(this.tmpV.set(x, y, z), out);
         return out;
     }
 

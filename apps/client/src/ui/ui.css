@@ -1103,3 +1103,18 @@
         font-size: 12px;
     }
 }
+
+.wardrobe .swatch {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    background: var(--swatch);
+    cursor: pointer;
+}
+
+.wardrobe .swatch[aria-pressed='true'] {
+    border-color: var(--ui-accent);
+    box-shadow: 0 0 0 2px rgba(53, 230, 220, 0.4);
+}

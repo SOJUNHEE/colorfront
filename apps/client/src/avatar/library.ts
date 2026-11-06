@@ -1,5 +1,5 @@
 import { DEFAULT_APPEARANCE, appearanceKey } from '@colorfront/shared';
-import type { AvatarAppearance, TeamId } from '@colorfront/shared';
+import type { AvatarAppearance, TeamId, WeaponId } from '@colorfront/shared';
 import {
     Asset,
     Mesh,
@@ -9,18 +9,19 @@ import {
     SEMANTIC_POSITION,
     SEMANTIC_TEXCOORD0,
     TYPE_FLOAT32,
-    TYPE_UINT8,
-    Texture
+    TYPE_UINT8
 } from 'playcanvas';
-import type { AppBase, ContainerResource, Entity, Material, MeshInstance, Skin, StandardMaterial } from 'playcanvas';
+import type { AppBase, ContainerResource, Entity, Material, MeshInstance, Skin, Texture } from 'playcanvas';
 
+import { makeUvRemap } from './atlas.ts';
 import { outfitParts } from './catalog.ts';
 
 /**
- * Loads the wardrobe GLBs once and turns an appearance into ONE opaque skinned mesh (+ one glass
- * mesh for the tank) per LOD by merging the parts on the CPU. Avatars wearing the same outfit
- * share the merged meshes (reference counted); different players never share a skeleton or skin
- * instance (that lives in GlbAvatar). This keeps a near avatar at 2 draw calls whatever it wears.
+ * Loads the wardrobe GLBs once and turns (appearance, team, weapon) into ONE opaque skinned mesh
+ * (+ one glass mesh for the tank) per LOD by merging the parts on the CPU. Colours, team and skin
+ * tone are applied by remapping UVs into the shared atlas while merging, so every avatar uses the
+ * same material and texture. Avatars with the same look share the merged meshes (reference
+ * counted); different players never share a skeleton or skin instance (GlbAvatar owns those).
  */
 
 export const LOD_COUNT = 3;
@@ -28,6 +29,7 @@ export const LOD_COUNT = 3;
 type FilePart = { mesh: Mesh; material: Material };
 type LoadedFile = Map<string, FilePart[]>;
 
+export type OutfitKey = { appearance: AvatarAppearance; team: TeamId; weapon: WeaponId };
 export type OutfitMeshes = { key: string; lod: number; opaque: Mesh; glass: Mesh | null; triangles: number };
 
 function loadContainer(app: AppBase, url: string): Promise<ContainerResource> {
@@ -40,29 +42,22 @@ function loadContainer(app: AppBase, url: string): Promise<ContainerResource> {
     });
 }
 
-function loadImage(url: string): Promise<HTMLImageElement> {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error(`image ${url}`));
-        img.src = url;
-    });
-}
-
 /** Node names may carry Blender duplicate suffixes (`hair.001`). */
 const cleanName = (n: string) => n.replace(/\.\d+$/, '');
+
+export const outfitId = (k: OutfitKey, lod: number) => `${appearanceKey(k.appearance)}|${k.team}|${k.weapon}#${lod}`;
 
 export class AvatarLibrary {
     readonly skeleton: Entity;
     /** Canonical skin (joint order + inverse binds) used by every merged mesh. */
     readonly skin: Skin;
+    readonly body: Material;
+    readonly glass: Material;
     private readonly app: AppBase;
     private readonly base: string;
-    private readonly bodyBlue: Material;
-    private bodyOrange: Material;
-    readonly glass: Material;
     private readonly files = new Map<string, Promise<LoadedFile>>();
     private readonly outfits = new Map<string, { meshes: OutfitMeshes; refs: number; pinned: boolean }>();
+    private readonly building = new Map<string, Promise<void>>();
     private readonly jointIndex: Map<string, number>;
     /** Diagnostics: merged meshes built so far. */
     merges = 0;
@@ -72,19 +67,17 @@ export class AvatarLibrary {
         this.base = base;
         this.skeleton = skeleton;
         this.skin = skin;
-        this.bodyBlue = body;
-        this.bodyOrange = body;
+        this.body = body;
         this.glass = glass;
         this.jointIndex = new Map(skin.boneNames.map((n, i) => [n, i]));
     }
 
     static async load(app: AppBase, base = '/assets/'): Promise<AvatarLibrary> {
-        // LOD0 base: skeleton template, canonical skin and the shared materials.
+        // LOD0 base: skeleton template, canonical skin and the shared atlas material.
         const res = await loadContainer(app, `${base}characters/courier_base_lod0.glb`);
         const tmp = res.instantiateRenderEntity();
         let skin: Skin | null = null;
         let body: Material | null = null;
-        let glass: Material | null = null;
         const first: LoadedFile = new Map();
         for (const r of tmp.findComponents('render')) {
             const entity = r.entity as Entity;
@@ -92,7 +85,6 @@ export class AvatarLibrary {
                 if (!mi.mesh || !mi.material) continue;
                 skin ??= mi.mesh.skin;
                 if (mi.material.name === 'cf_body') body ??= mi.material;
-                if (mi.material.name === 'cf_glass') glass ??= mi.material;
                 const list = first.get(cleanName(entity.name)) ?? [];
                 list.push({ mesh: mi.mesh, material: mi.material });
                 first.set(cleanName(entity.name), list);
@@ -101,15 +93,15 @@ export class AvatarLibrary {
             entity.removeComponent('render');
         }
         if (!skin || !body) throw new Error('courier_base_lod0.glb: missing skin or cf_body material');
-        // The base GLB has no tank; take the glass material from the tank file below.
-        const lib = new AvatarLibrary(app, base, tmp, skin, body, glass ?? body);
-        lib.files.set('characters/courier_base#0', Promise.resolve(first));
-        const tank = await lib.loadFile('clothes', 'back_tank_standard', 0);
-        for (const parts of tank.values()) for (const p of parts) if (p.material.name === 'cf_glass') (lib as { glass: Material }).glass = p.material;
-        await lib.prepareTeam();
-        // The default outfit is always available synchronously (pinned in the cache).
-        await lib.prepare(DEFAULT_APPEARANCE, true);
-        return lib;
+        let glass: Material = body;
+        const lib0 = new AvatarLibrary(app, base, tmp, skin, body, body);
+        lib0.files.set('characters/courier_base#0', Promise.resolve(first));
+        const tank = await lib0.loadFile('clothes', 'back_tank_standard', 0);
+        for (const parts of tank.values()) for (const p of parts) if (p.material.name === 'cf_glass') glass = p.material;
+        (lib0 as { glass: Material }).glass = glass;
+        // The default look (blue and orange, rifle) is always available synchronously.
+        await Promise.all((['blue', 'orange'] as const).map((team) => lib0.prepare({ appearance: DEFAULT_APPEARANCE, team, weapon: 'paint-rifle' }, true)));
+        return lib0;
     }
 
     private loadFile(folder: string, file: string, lod: number): Promise<LoadedFile> {
@@ -117,8 +109,8 @@ export class AvatarLibrary {
         let p = this.files.get(key);
         if (!p) {
             p = loadContainer(this.app, `${this.base}${folder}/${file}_lod${lod}.glb`).then((res) => {
-                // Items are drawn with the shared materials of courier_base_lod0; release any
-                // texture a file still carries so it never occupies GPU memory.
+                // Items use the shared materials of courier_base_lod0; release any texture a file
+                // still carries so it never occupies GPU memory.
                 for (const t of res.textures) (t.resource as Texture | null)?.destroy();
                 const tmp = res.instantiateRenderEntity();
                 const out: LoadedFile = new Map();
@@ -136,77 +128,56 @@ export class AvatarLibrary {
                 return out;
             });
             this.files.set(key, p);
-            // A failed file can be retried later.
-            p.catch(() => this.files.delete(key));
+            p.catch(() => this.files.delete(key)); // a failed file can be retried later
         }
         return p;
     }
 
-    /** The GLBs embed the blue atlas; build the orange body material once (shared). */
-    private async prepareTeam() {
-        const [atlas, emissive] = await Promise.all([
-            loadImage(`${this.base}characters/courier_atlas_orange.png`),
-            loadImage(`${this.base}characters/courier_emissive_orange.png`)
-        ]);
-        const m = this.bodyBlue as StandardMaterial;
-        const make = (img: HTMLImageElement, like: Texture | null) => {
-            const t = new Texture(this.app.graphicsDevice, {
-                name: 'courier-orange',
-                width: img.width,
-                height: img.height,
-                format: like?.format,
-                mipmaps: true,
-                flipY: like?.flipY ?? false,
-                minFilter: like?.minFilter,
-                magFilter: like?.magFilter,
-                addressU: like?.addressU,
-                addressV: like?.addressV
-            });
-            t.setSource(img);
-            return t;
-        };
-        const o = m.clone();
-        o.diffuseMap = make(atlas, m.diffuseMap);
-        if (m.emissiveMap) o.emissiveMap = make(emissive, m.emissiveMap);
-        o.update();
-        this.bodyOrange = o;
+    /** Load every file the look needs (all LODs) and build its merged meshes. */
+    async prepare(k: OutfitKey, pin = false): Promise<void> {
+        const id0 = outfitId(k, 0);
+        if (this.outfits.has(id0)) {
+            if (pin) for (let l = 0; l < LOD_COUNT; l++) this.outfits.get(outfitId(k, l))!.pinned = true;
+            return;
+        }
+        let job = this.building.get(id0);
+        if (!job) {
+            job = this.build(k, pin).finally(() => this.building.delete(id0));
+            this.building.set(id0, job);
+        }
+        await job;
+        if (pin) for (let l = 0; l < LOD_COUNT; l++) this.outfits.get(outfitId(k, l))!.pinned = true;
     }
 
-    bodyMaterial(team: TeamId): Material {
-        return team === 'orange' ? this.bodyOrange : this.bodyBlue;
-    }
-
-    /** Load every file the appearance needs (all LODs) and build its merged meshes. */
-    async prepare(a: AvatarAppearance, pin = false): Promise<void> {
-        const parts = outfitParts(a);
+    private async build(k: OutfitKey, pin: boolean) {
+        const parts = outfitParts(k.appearance, k.weapon);
+        const remap = makeUvRemap({ ...k.appearance, team: k.team });
         for (let lod = 0; lod < LOD_COUNT; lod++) {
-            const key = `${appearanceKey(a)}#${lod}`;
-            if (this.outfits.has(key)) {
-                if (pin) this.outfits.get(key)!.pinned = true;
-                continue;
-            }
             const files = await Promise.all(parts.map((p) => this.loadFile(p.folder, p.file, lod)));
-            if (this.outfits.has(key)) continue; // built meanwhile by a concurrent call
             const meshes: FilePart[] = [];
             parts.forEach((p, i) => {
                 const found = files[i].get(p.node);
                 if (!found) throw new Error(`${p.file}_lod${lod}.glb has no node "${p.node}"`);
                 meshes.push(...found);
             });
-            const opaque = this.merge(meshes.filter((m) => m.material.name !== 'cf_glass'));
+            const opaque = this.merge(
+                meshes.filter((m) => m.material.name !== 'cf_glass'),
+                remap
+            );
             const glassParts = meshes.filter((m) => m.material.name === 'cf_glass');
-            const glass = glassParts.length ? this.merge(glassParts) : null;
+            const glass = glassParts.length ? this.merge(glassParts, null) : null;
             const triangles = (opaque.primitive[0].count + (glass?.primitive[0].count ?? 0)) / 3;
             // The cache owns one reference; mesh instances add their own (engine refcount).
             opaque.incRefCount();
             glass?.incRefCount();
-            this.outfits.set(key, { meshes: { key, lod, opaque, glass, triangles }, refs: 0, pinned: pin });
+            const id = outfitId(k, lod);
+            this.outfits.set(id, { meshes: { key: id, lod, opaque, glass, triangles }, refs: 0, pinned: pin });
         }
     }
 
-    /** Cached merged meshes for an appearance/LOD (null if not prepared yet). Counts a user. */
-    acquire(a: AvatarAppearance, lod: number): OutfitMeshes | null {
-        const e = this.outfits.get(`${appearanceKey(a)}#${lod}`);
+    /** Cached merged meshes for a look/LOD (null if not prepared yet). Counts a user. */
+    acquire(k: OutfitKey, lod: number): OutfitMeshes | null {
+        const e = this.outfits.get(outfitId(k, lod));
         if (!e) return null;
         e.refs++;
         return e.meshes;
@@ -232,11 +203,11 @@ export class AvatarLibrary {
         return { outfits: this.outfits.size, refs, files: this.files.size, merges: this.merges };
     }
 
-    triangles(a: AvatarAppearance): number[] {
-        return [0, 1, 2].map((lod) => this.outfits.get(`${appearanceKey(a)}#${lod}`)?.meshes.triangles ?? 0);
+    triangles(k: OutfitKey): number[] {
+        return [0, 1, 2].map((lod) => this.outfits.get(outfitId(k, lod))?.meshes.triangles ?? 0);
     }
 
-    private merge(parts: FilePart[]): Mesh {
+    private merge(parts: FilePart[], remap: ((u: number, v: number) => [number, number]) | null): Mesh {
         const pos: number[] = [];
         const nor: number[] = [];
         const uv: number[] = [];
@@ -257,7 +228,7 @@ export class AvatarLibrary {
             mesh.getVertexStream(SEMANTIC_BLENDWEIGHT, w);
             // Remap joint indices by bone name onto the canonical skin.
             const names = mesh.skin?.boneNames ?? this.skin.boneNames;
-            const remap = names.map((name) => {
+            const jmap = names.map((name) => {
                 const k = this.jointIndex.get(name);
                 if (k === undefined) throw new Error(`unknown joint ${name}`);
                 return k;
@@ -265,9 +236,14 @@ export class AvatarLibrary {
             for (let i = 0; i < count; i++) {
                 pos.push(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
                 nor.push(n[i * 3] ?? 0, n[i * 3 + 1] ?? 1, n[i * 3 + 2] ?? 0);
-                uv.push(t[i * 2] ?? 0, t[i * 2 + 1] ?? 0);
+                const tu = t[i * 2] ?? 0;
+                const tv = t[i * 2 + 1] ?? 0;
+                if (remap) {
+                    const [ru, rv] = remap(tu, tv);
+                    uv.push(ru, rv);
+                } else uv.push(tu, tv);
                 for (let c = 0; c < 4; c++) {
-                    bi.push(remap[j[i * 4 + c] ?? 0] ?? 0);
+                    bi.push(jmap[j[i * 4 + c] ?? 0] ?? 0);
                     bw.push(w[i * 4 + c] ?? 0);
                 }
             }

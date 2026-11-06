@@ -25,7 +25,6 @@
 |---|---|---|---|
 | `apps/client/public/assets/characters/courier_default_lod{0,1,2}.glb` | `assets-src/blender/colorfront_courier_master.blend` | 프로젝트 자체 제작 | `build_courier.py` |
 | `apps/client/public/assets/characters/courier_base_lod{0,1,2}.glb` (부위별 베이스 몸체. LOD0에만 공용 텍스처 내장) | 위 `.blend` | 자체 제작 | 위와 같음 |
-| `apps/client/public/assets/clothes/{top_bomber,top_hardshell,bottom_cargo,bottom_short,shoes_runner,hair_sidepart,hair_crew,headwear_cap,back_tank_standard}_lod{0,1,2}.glb` (Gate 3 의상, 이미지 미포함) | 위 `.blend` | 자체 제작 | 위와 같음 |
-| `apps/client/public/assets/weapons/paint_rifle_lod{0,1,2}.glb` | 위 `.blend` | 자체 제작 | 위와 같음 |
-| `apps/client/public/assets/characters/courier_{atlas,emissive}_{blue,orange}.png` | `assets-src/blender/textures/` | 자체 제작 | numpy로 그린 절차적 텍스처 |
-| `assets-src/blender/textures/courier_orm.png` | 같음 | 자체 제작 | 같음 |
+| `apps/client/public/assets/clothes/<item>_lod{0,1,2}.glb` (이미지 미포함). 헤어: sidepart·crew·ponytail·buzz / 모자: cap·beanie / 얼굴: goggles·glasses / 목: scarf·headphones / 상의: bomber·hardshell·tee·hoodie / 하의: cargo·short·jogger / 신발: runner·boots / 등: tank_standard·tank_twin | 위 `.blend` | 자체 제작 | `build_courier.py` |
+| `apps/client/public/assets/weapons/{paint_rifle,weapon_shotgun,weapon_smg,weapon_sniper}_lod{0,1,2}.glb` | 위 `.blend` | 자체 제작 | 위와 같음. 실총 형상이 아닌 장난감풍 페인트 분사기 디자인 |
+| `assets-src/blender/textures/courier_{atlas,emissive,orm}.png` (GLB에는 `courier_base_lod0.glb`에만 내장) | 같음 | 자체 제작 | numpy로 그린 절차적 텍스처. 아틀라스 1장에 피부 4톤·머리색 8·옷 색 4·팀 2색 팔레트 칸과 표정 4종 × 피부 4톤 얼굴 타일이 들어 있다(배치: `assets-src/blender/atlas_layout.json`) |

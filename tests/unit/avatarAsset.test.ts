@@ -7,10 +7,11 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { DEFAULT_APPEARANCE, SLOT_FIELD, WARDROBE_ITEMS, WARDROBE_SLOTS } from '@colorfront/shared';
+import { COLOR_CHOICES, DEFAULT_APPEARANCE, PLAYABLE_WEAPONS, SLOT_FIELD, WARDROBE_ITEMS, WARDROBE_SLOTS } from '@colorfront/shared';
 import type { AvatarAppearance } from '@colorfront/shared';
 import { describe, expect, it } from 'vitest';
 
+import { ATLAS, ATLAS_CELLS, ATLAS_EMBLEMS, makeUvRemap } from '../../apps/client/src/avatar/atlas.ts';
 import { outfitParts } from '../../apps/client/src/avatar/catalog.ts';
 
 const ASSETS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'apps', 'client', 'public', 'assets');
@@ -108,11 +109,38 @@ describe('avatar GLB contract', () => {
         });
     }
 
-    it('ships the orange team textures the runtime swaps in', () => {
-        for (const f of ['courier_atlas_orange.png', 'courier_emissive_orange.png']) {
-            const png = readFileSync(join(ASSETS, 'characters', f));
-            expect(png.subarray(1, 4).toString('ascii')).toBe('PNG');
-        }
+    it('the runtime atlas layout matches the one Blender wrote', () => {
+        const layout = JSON.parse(readFileSync(join(ASSETS, '..', '..', '..', '..', 'assets-src', 'blender', 'atlas_layout.json'), 'utf8'));
+        expect({ width: layout.width, height: layout.height, cell: layout.cell, faceTile: layout.faceTile, faceOriginX: layout.faceOriginX }).toEqual(ATLAS);
+        expect(layout.cells).toEqual(ATLAS_CELLS);
+        expect(layout.emblems).toEqual(ATLAS_EMBLEMS);
+        expect(layout.skinTones).toEqual(COLOR_CHOICES.skinTone);
+        expect(layout.hairColors).toEqual(COLOR_CHOICES.hairColor);
+        expect(layout.outfitSchemes).toEqual(COLOR_CHOICES.outfitColor);
+    });
+
+    it('colour/team remap keeps palette UVs on cell centres and moves the face to the tone row', () => {
+        const C = ATLAS.cell;
+        const centre = (i: number) => [((i % 8) * C + C / 2) / ATLAS.width, 1 - (Math.floor(i / 8) * C + C / 2) / ATLAS.height] as const;
+        const r = makeUvRemap({ team: 'orange', skinTone: 'deep', hairColor: 'pink', outfitColor: 'olive' })!;
+        const check = (from: string, to: string) => {
+            const [u, v] = centre(ATLAS_CELLS[from]);
+            const [eu, ev] = centre(ATLAS_CELLS[to]);
+            const [ru, rv] = r(u, v);
+            expect(ru).toBeCloseTo(eu, 9);
+            expect(rv).toBeCloseTo(ev, 9);
+        };
+        check('team_blue', 'team_orange');
+        check('led_blue', 'led_orange');
+        check('skin_light', 'skin_deep');
+        check('hair_navy', 'hair_pink');
+        check('slate_graphite', 'slate_olive');
+        check('ivory', 'ivory');
+        // Face tile: same column, 3 tile rows up (Blender rows), i.e. v decreases.
+        const [fu, fv] = r((ATLAS.faceOriginX + 100) / ATLAS.width, 1 - 100 / ATLAS.height);
+        expect(fu).toBeCloseTo((ATLAS.faceOriginX + 100) / ATLAS.width, 9);
+        expect(fv).toBeCloseTo(1 - (100 + 3 * ATLAS.faceTile) / ATLAS.height, 9);
+        expect(makeUvRemap({ team: 'blue', skinTone: 'light', hairColor: 'navy', outfitColor: 'graphite' })).toBeNull();
     });
 
     describe('wardrobe items (Gate 3)', () => {
@@ -145,7 +173,7 @@ describe('avatar GLB contract', () => {
 
         it('every item GLB uses the canonical skeleton with identity rest rotations', () => {
             const seen = new Set<string>();
-            for (const a of combos) for (const p of outfitParts(a)) seen.add(`${p.folder}/${p.file}`);
+            for (const a of combos) for (const w of PLAYABLE_WEAPONS) for (const p of outfitParts(a, w)) seen.add(`${p.folder}/${p.file}`);
             for (const f of seen) {
                 for (let lod = 0; lod < 3; lod++) {
                     const [folder, file] = f.split('/');
@@ -160,10 +188,10 @@ describe('avatar GLB contract', () => {
             }
         });
 
-        it(`all ${combos.length} outfits stay within the per-avatar LOD budget (${BUDGET.join('/')})`, () => {
+        it(`all ${combos.length} outfits x ${PLAYABLE_WEAPONS.length} weapons stay within the per-avatar LOD budget (${BUDGET.join('/')})`, () => {
             for (const a of combos) {
-                for (let lod = 0; lod < 3; lod++) {
-                    const tris = outfitParts(a).reduce((n, p) => n + nodeTris(gltfOf(p.folder, p.file, lod), p.node), 0);
+                for (const weapon of PLAYABLE_WEAPONS) for (let lod = 0; lod < 3; lod++) {
+                    const tris = outfitParts(a, weapon).reduce((n, p) => n + nodeTris(gltfOf(p.folder, p.file, lod), p.node), 0);
                     expect(tris, `${Object.values(a).join(',')} LOD${lod}`).toBeLessThanOrEqual(BUDGET[lod]);
                 }
             }
