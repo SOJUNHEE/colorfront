@@ -1,0 +1,278 @@
+{
+  "idle": {
+    "duration": 2.4,
+    "loop": true,
+    "layer": "base",
+    "stride": null,
+    "bones": [
+      "hips",
+      "spine",
+      "chest",
+      "neck",
+      "head",
+      "thighL",
+      "shinL",
+      "footL",
+      "thighR",
+      "shinR",
+      "footR"
+    ]
+  },
+  "jog": {
+    "duration": 0.5,
+    "loop": true,
+    "layer": "base",
+    "stride": 3.0,
+    "bones": [
+      "hips",
+      "spine",
+      "chest",
+      "neck",
+      "head",
+      "thighL",
+      "shinL",
+      "footL",
+      "thighR",
+      "shinR",
+      "footR"
+    ]
+  },
+  "run": {
+    "duration": 0.44,
+    "loop": true,
+    "layer": "base",
+    "stride": 3.52,
+    "bones": [
+      "hips",
+      "spine",
+      "chest",
+      "neck",
+      "head",
+      "thighL",
+      "shinL",
+      "footL",
+      "thighR",
+      "shinR",
+      "footR"
+    ]
+  },
+  "jog_back": {
+    "duration": 0.5,
+    "loop": true,
+    "layer": "base",
+    "stride": 3.0,
+    "bones": [
+      "hips",
+      "spine",
+      "chest",
+      "neck",
+      "head",
+      "thighL",
+      "shinL",
+      "footL",
+      "thighR",
+      "shinR",
+      "footR"
+    ]
+  },
+  "strafe_R": {
+    "duration": 0.5,
+    "loop": true,
+    "layer": "base",
+    "stride": 3.0,
+    "bones": [
+      "hips",
+      "spine",
+      "chest",
+      "neck",
+      "head",
+      "thighL",
+      "shinL",
+      "footL",
+      "thighR",
+      "shinR",
+      "footR"
+    ]
+  },
+  "strafe_L": {
+    "duration": 0.5,
+    "loop": true,
+    "layer": "base",
+    "stride": 3.0,
+    "bones": [
+      "hips",
+      "spine",
+      "chest",
+      "neck",
+      "head",
+      "thighL",
+      "shinL",
+      "footL",
+      "thighR",
+      "shinR",
+      "footR"
+    ]
+  },
+  "dash": {
+    "duration": 0.2,
+    "loop": true,
+    "layer": "base",
+    "stride": null,
+    "bones": [
+      "hips",
+      "spine",
+      "chest",
+      "neck",
+      "head",
+      "thighL",
+      "shinL",
+      "footL",
+      "thighR",
+      "shinR",
+      "footR"
+    ]
+  },
+  "jump_start": {
+    "duration": 0.16,
+    "loop": false,
+    "layer": "base",
+    "stride": null,
+    "bones": [
+      "hips",
+      "spine",
+      "chest",
+      "neck",
+      "head",
+      "thighL",
+      "shinL",
+      "footL",
+      "thighR",
+      "shinR",
+      "footR"
+    ]
+  },
+  "jump_air": {
+    "duration": 0.9,
+    "loop": true,
+    "layer": "base",
+    "stride": null,
+    "bones": [
+      "hips",
+      "spine",
+      "chest",
+      "neck",
+      "head",
+      "thighL",
+      "shinL",
+      "footL",
+      "thighR",
+      "shinR",
+      "footR"
+    ]
+  },
+  "land": {
+    "duration": 0.42,
+    "loop": false,
+    "layer": "base",
+    "stride": null,
+    "bones": [
+      "hips",
+      "spine",
+      "chest",
+      "neck",
+      "head",
+      "thighL",
+      "shinL",
+      "footL",
+      "thighR",
+      "shinR",
+      "footR"
+    ]
+  },
+  "aim": {
+    "duration": 0.5,
+    "loop": true,
+    "layer": "upper",
+    "stride": null,
+    "bones": [
+      "spine",
+      "chest",
+      "neck",
+      "head"
+    ]
+  },
+  "fire": {
+    "duration": 0.16,
+    "loop": false,
+    "layer": "upper",
+    "stride": null,
+    "bones": [
+      "spine",
+      "chest",
+      "neck",
+      "head"
+    ]
+  },
+  "reload": {
+    "duration": 1.0,
+    "loop": false,
+    "layer": "upper",
+    "stride": null,
+    "bones": [
+      "spine",
+      "chest",
+      "neck",
+      "head"
+    ]
+  },
+  "hit": {
+    "duration": 0.36,
+    "loop": false,
+    "layer": "upper",
+    "stride": null,
+    "bones": [
+      "spine",
+      "chest",
+      "neck",
+      "head"
+    ]
+  },
+  "respawn": {
+    "duration": 0.7,
+    "loop": false,
+    "layer": "base",
+    "stride": null,
+    "bones": [
+      "hips",
+      "spine",
+      "chest",
+      "neck",
+      "head",
+      "thighL",
+      "shinL",
+      "footL",
+      "thighR",
+      "shinR",
+      "footR"
+    ]
+  },
+  "victory": {
+    "duration": 0.9,
+    "loop": true,
+    "layer": "base",
+    "stride": null,
+    "bones": [
+      "hips",
+      "spine",
+      "chest",
+      "neck",
+      "head",
+      "thighL",
+      "shinL",
+      "footL",
+      "thighR",
+      "shinR",
+      "footR"
+    ]
+  }
+}

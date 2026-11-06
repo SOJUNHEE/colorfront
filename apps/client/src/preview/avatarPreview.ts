@@ -4,7 +4,8 @@
  * Drives every avatar with the same RigPose stream for the 12 gameplay states, so skinning,
  * IK, tank level, team swap and LODs can be checked side by side. Automation: window.__preview.
  */
-import { DEFAULT_APPEARANCE } from '@colorfront/shared';
+import { DEFAULT_APPEARANCE, PLAYABLE_WEAPONS } from '@colorfront/shared';
+import type { WeaponId } from '@colorfront/shared';
 import {
     AppBase,
     AppOptions,
@@ -30,8 +31,39 @@ import { SceneEnvironment } from '../render/Environment.ts';
 import { PostEffects } from '../render/PostEffects.ts';
 import { QUALITY_PROFILES } from '../settings/settings.ts';
 
-const POSES = ['idle', 'walk', 'run', 'dash', 'jump', 'land', 'aim', 'fire', 'reload', 'hit', 'respawn', 'victory'] as const;
-type PoseName = (typeof POSES)[number];
+const POSES = [
+    'idle',
+    'walk',
+    'run',
+    'back',
+    'strafeL',
+    'strafeR',
+    'dash',
+    'jump',
+    'land',
+    'aim',
+    'fire',
+    'reload',
+    'hit',
+    'respawn',
+    'victory',
+    'sequence'
+] as const;
+/** Gate 4 fixed sequence: walk -> run -> jump -> land -> aim -> fire -> reload -> dash -> idle (seconds). */
+const SEQUENCE: readonly [number, PoseName][] = [
+    [0, 'walk'],
+    [1.2, 'run'],
+    [2.4, 'jump'],
+    [2.85, 'land'],
+    [3.6, 'aim'],
+    [4.4, 'fire'],
+    [5.4, 'reload'],
+    [7.0, 'dash'],
+    [7.35, 'idle'],
+    [8.2, 'walk']
+];
+const SEQUENCE_LENGTH = 8.2;
+type PoseName = Exclude<(typeof POSES)[number], 'sequence'> | 'sequence';
 const VIEWS = ['front', 'side', 'back', 'three', 'game', 'lineup', 'face'] as const;
 type ViewName = (typeof VIEWS)[number];
 
@@ -93,6 +125,23 @@ async function main() {
     slots.push({ view: new CharacterRig(app, 'blue', 3), x: -1.6, lod: 0, label: '기존 CharacterRig' });
 
     let pose: PoseName = 'idle';
+    let weapon: WeaponId = 'paint-rifle';
+    /** Pose actually driven this frame (resolves 'sequence'). */
+    const active = (): Exclude<PoseName, 'sequence'> => {
+        if (pose !== 'sequence') return pose;
+        const t = clock % SEQUENCE_LENGTH;
+        let cur: PoseName = 'idle';
+        for (const [at, p] of SEQUENCE) if (t >= at) cur = p;
+        return cur as Exclude<PoseName, 'sequence'>;
+    };
+    /** Seconds since the current sequence step started (or since the pose was picked). */
+    const local = () => {
+        if (pose !== 'sequence') return clock;
+        const t = clock % SEQUENCE_LENGTH;
+        let start = 0;
+        for (const [at] of SEQUENCE) if (t >= at) start = at;
+        return t - start;
+    };
     let view: ViewName = 'front';
     let clock = 0;
     let lastFire = 0;
@@ -119,7 +168,15 @@ async function main() {
             alive: true
         };
         const fwd = (s: number) => ({ vx: -Math.sin(yaw) * s, vz: -Math.cos(yaw) * s });
-        switch (pose) {
+        const side = (s: number) => ({ vx: Math.cos(yaw) * s, vz: -Math.sin(yaw) * s });
+        const lt = local();
+        switch (active()) {
+            case 'back':
+                return { ...base, ...fwd(-5) };
+            case 'strafeL':
+                return { ...base, ...side(-6) };
+            case 'strafeR':
+                return { ...base, ...side(6) };
             case 'walk':
                 return { ...base, ...fwd(4) };
             case 'run':
@@ -127,8 +184,9 @@ async function main() {
             case 'dash':
                 return { ...base, ...fwd(14), dashing: true };
             case 'jump':
-                return { ...base, grounded: false, vy: 3 };
+                return pose === 'sequence' ? { ...base, ...fwd(8), grounded: false, vy: 5 - lt * 20 } : { ...base, grounded: false, vy: 3 };
             case 'land': {
+                if (pose === 'sequence') return base;
                 const air = clock % 1.2 < 0.45;
                 return { ...base, grounded: !air, vy: air ? -6 : 0 };
             }
@@ -136,8 +194,10 @@ async function main() {
                 return { ...base, aiming: true, pitch: 0.12 };
             case 'fire':
                 return { ...base, aiming: true, ammo: 1 - (clock % 3) / 3 };
-            case 'reload':
-                return { ...base, reload: (clock % 1.6) / 1.6, ammo: (clock % 1.6) / 1.6 };
+            case 'reload': {
+                const r = pose === 'sequence' ? Math.min(0.999, lt / 1.6) : (clock % 1.6) / 1.6;
+                return { ...base, reload: r, ammo: r };
+            }
             default:
                 return base;
         }
@@ -178,20 +238,22 @@ async function main() {
 
     app.on('update', (dt: number) => {
         clock += dt;
-        if (pose === 'fire' && clock - lastFire > 0.2) {
+        const now = active();
+        if (now === 'fire' && clock - lastFire > 0.2) {
             lastFire = clock;
             for (const s of slots) s.view.fired();
         }
-        if (pose === 'hit' && clock - lastHit > 0.8) {
+        if (now === 'hit' && clock - lastHit > 0.8) {
             lastHit = clock;
             for (const s of slots) s.view.hit();
         }
-        if (pose === 'respawn' && clock - lastSpawn > 1.5) {
+        if (now === 'respawn' && clock - lastSpawn > 1.5) {
             lastSpawn = clock;
             for (const s of slots) s.view.respawned();
         }
         for (const s of slots) {
-            s.view.celebrate(pose === 'victory');
+            s.view.celebrate(now === 'victory');
+            s.view.setWeapon?.(weapon);
             // Force each slot's LOD through the camera distance argument (lodDistance = 10 m).
             const dist = [2, 15, 40][s.lod];
             s.view.update(dt, rigPose(s.x), dist, 10);
@@ -222,6 +284,7 @@ async function main() {
         pose = v as PoseName;
         clock = 0;
     });
+    btns('weapons', PLAYABLE_WEAPONS, () => weapon, (v) => (weapon = v as WeaponId));
     const stats = lib.triangles({ appearance: DEFAULT_APPEARANCE, team: 'blue', weapon: 'paint-rifle' });
     status.textContent = `GLB 로드 ${loadMs} ms · 삼각형 LOD0/1/2 = ${stats.join(' / ')}`;
 
@@ -240,9 +303,12 @@ async function main() {
             pose = p;
             clock = 0;
         },
+        setWeapon: (w: WeaponId) => {
+            weapon = w;
+        },
         /** Advance the simulation deterministically (time frozen afterwards). */
         step: (sec: number, dt = 1 / 60) => {
-            app.timeScale = 1;
+            app.timeScale = 0; // stay frozen: only these explicit steps advance time
             for (let i = 0; i < Math.round(sec / dt); i++) app.fire('update', dt);
         },
         freeze: (on: boolean) => {

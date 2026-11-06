@@ -83,11 +83,19 @@ export const COLOR_LABELS = {
 } as const;
 
 /** Gun model drawn for each gameplay weapon (the model tells others what you carry). */
-export const WEAPON_MODELS: Readonly<Record<WeaponId, { file: string; muzzle: readonly [number, number, number] }>> = {
-    'paint-rifle': { file: 'paint_rifle', muzzle: [0, 0.03, -0.64] },
-    'splash-shotgun': { file: 'weapon_shotgun', muzzle: [0, 0.03, -0.56] },
-    'spray-smg': { file: 'weapon_smg', muzzle: [0, 0.02, -0.45] },
-    'long-sniper': { file: 'weapon_sniper', muzzle: [0, 0.025, -0.93] }
+type V3 = readonly [number, number, number];
+
+/**
+ * Weapon models and how they are held (all in the gun bone's space, metres; -Z = barrel).
+ * `muzzle`: nozzle tip (shot visuals). `grip`/`fore`: right/left hand IK targets on the model's
+ * pistol grip and fore grip. `offset`: carry position relative to the gun bone's rest (the shotgun
+ * sits lower at the hip, the sniper higher at the shoulder, the SMG tucked in).
+ */
+export const WEAPON_MODELS: Readonly<Record<WeaponId, { file: string; muzzle: V3; grip: V3; fore: V3; offset: V3 }>> = {
+    'paint-rifle': { file: 'paint_rifle', muzzle: [0, 0.03, -0.64], grip: [0, -0.08, 0.02], fore: [0, -0.06, -0.3], offset: [0, 0, 0] },
+    'splash-shotgun': { file: 'weapon_shotgun', muzzle: [0, 0.03, -0.56], grip: [0, -0.08, 0.02], fore: [0, -0.05, -0.38], offset: [0, -0.03, 0.01] },
+    'spray-smg': { file: 'weapon_smg', muzzle: [0, 0.02, -0.45], grip: [0, -0.08, 0.02], fore: [0, -0.13, -0.1], offset: [-0.01, 0.005, 0.04] },
+    'long-sniper': { file: 'weapon_sniper', muzzle: [0, 0.025, -0.93], grip: [0, -0.08, 0.02], fore: [0, -0.045, -0.42], offset: [-0.005, 0.02, -0.01] }
 };
 
 export type OutfitPart = { file: string; folder: string; node: string };

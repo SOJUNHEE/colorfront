@@ -11,9 +11,10 @@ import {
     TYPE_FLOAT32,
     TYPE_UINT8
 } from 'playcanvas';
-import type { AppBase, ContainerResource, Entity, Material, MeshInstance, Skin, Texture } from 'playcanvas';
+import type { AnimTrack, AppBase, ContainerResource, Entity, Material, MeshInstance, Skin, Texture } from 'playcanvas';
 
-import { makeUvRemap } from './atlas.ts';
+import { ClipSet } from './anim.ts';
+import { ATLAS, makeUvRemap } from './atlas.ts';
 import { outfitParts } from './catalog.ts';
 
 /**
@@ -30,7 +31,22 @@ type FilePart = { mesh: Mesh; material: Material };
 type LoadedFile = Map<string, FilePart[]>;
 
 export type OutfitKey = { appearance: AvatarAppearance; team: TeamId; weapon: WeaponId };
-export type OutfitMeshes = { key: string; lod: number; opaque: Mesh; glass: Mesh | null; triangles: number };
+export type OutfitMeshes = {
+    key: string;
+    lod: number;
+    opaque: Mesh;
+    glass: Mesh | null;
+    /** LOD0 only: the face (split out of `opaque`), one mesh per expression (UV shifted to its tile). */
+    faces: Mesh[] | null;
+    triangles: number;
+};
+
+/** Face tiles in the atlas, left to right (assets-src/blender/atlas_layout.json `expressions`). */
+export const EXPRESSIONS = ['neutral', 'blink', 'happy', 'surprised'] as const;
+export type Expression = (typeof EXPRESSIONS)[number];
+
+/** Is this UV inside the face-tile block of the atlas? */
+const inFaceBlock = (u: number) => u * ATLAS.width >= ATLAS.faceOriginX - 0.5;
 
 function loadContainer(app: AppBase, url: string): Promise<ContainerResource> {
     return new Promise((resolve, reject) => {
@@ -53,6 +69,8 @@ export class AvatarLibrary {
     readonly skin: Skin;
     readonly body: Material;
     readonly glass: Material;
+    /** Keyframed clips (characters/courier_anims.glb), shared by every avatar. */
+    readonly clips: ClipSet;
     private readonly app: AppBase;
     private readonly base: string;
     private readonly files = new Map<string, Promise<LoadedFile>>();
@@ -62,8 +80,9 @@ export class AvatarLibrary {
     /** Diagnostics: merged meshes built so far. */
     merges = 0;
 
-    private constructor(app: AppBase, base: string, skeleton: Entity, skin: Skin, body: Material, glass: Material) {
+    private constructor(app: AppBase, base: string, skeleton: Entity, skin: Skin, body: Material, glass: Material, clips: ClipSet) {
         this.app = app;
+        this.clips = clips;
         this.base = base;
         this.skeleton = skeleton;
         this.skin = skin;
@@ -73,8 +92,13 @@ export class AvatarLibrary {
     }
 
     static async load(app: AppBase, base = '/assets/'): Promise<AvatarLibrary> {
-        // LOD0 base: skeleton template, canonical skin and the shared atlas material.
-        const res = await loadContainer(app, `${base}characters/courier_base_lod0.glb`);
+        // LOD0 base: skeleton template, canonical skin and the shared atlas material; animation clips.
+        const [res, animRes] = await Promise.all([
+            loadContainer(app, `${base}characters/courier_base_lod0.glb`),
+            loadContainer(app, `${base}characters/courier_anims.glb`)
+        ]);
+        const clips = ClipSet.fromTracks(animRes.animations.map((a) => a.resource as AnimTrack));
+        if (clips.names.length === 0) throw new Error('courier_anims.glb: no animation clips');
         const tmp = res.instantiateRenderEntity();
         let skin: Skin | null = null;
         let body: Material | null = null;
@@ -94,7 +118,7 @@ export class AvatarLibrary {
         }
         if (!skin || !body) throw new Error('courier_base_lod0.glb: missing skin or cf_body material');
         let glass: Material = body;
-        const lib0 = new AvatarLibrary(app, base, tmp, skin, body, body);
+        const lib0 = new AvatarLibrary(app, base, tmp, skin, body, body, clips);
         lib0.files.set('characters/courier_base#0', Promise.resolve(first));
         const tank = await lib0.loadFile('clothes', 'back_tank_standard', 0);
         for (const parts of tank.values()) for (const p of parts) if (p.material.name === 'cf_glass') glass = p.material;
@@ -160,18 +184,18 @@ export class AvatarLibrary {
                 if (!found) throw new Error(`${p.file}_lod${lod}.glb has no node "${p.node}"`);
                 meshes.push(...found);
             });
-            const opaque = this.merge(
-                meshes.filter((m) => m.material.name !== 'cf_glass'),
-                remap
-            );
+            const solid = meshes.filter((m) => m.material.name !== 'cf_glass');
+            // LOD0: the face triangles become their own small mesh so expressions can be swapped per
+            // avatar (4 UV-shifted copies); far LODs keep the neutral face inside the body mesh.
+            const opaque = this.merge(solid, remap, lod === 0 ? 'body' : 'all');
+            const faces = lod === 0 ? EXPRESSIONS.map((_, e) => this.merge(solid, remap, 'face', (e * ATLAS.faceTile) / ATLAS.width)) : null;
             const glassParts = meshes.filter((m) => m.material.name === 'cf_glass');
             const glass = glassParts.length ? this.merge(glassParts, null) : null;
-            const triangles = (opaque.primitive[0].count + (glass?.primitive[0].count ?? 0)) / 3;
+            const triangles = (opaque.primitive[0].count + (glass?.primitive[0].count ?? 0) + (faces?.[0].primitive[0].count ?? 0)) / 3;
             // The cache owns one reference; mesh instances add their own (engine refcount).
-            opaque.incRefCount();
-            glass?.incRefCount();
+            for (const m of [opaque, glass, ...(faces ?? [])]) m?.incRefCount();
             const id = outfitId(k, lod);
-            this.outfits.set(id, { meshes: { key: id, lod, opaque, glass, triangles }, refs: 0, pinned: pin });
+            this.outfits.set(id, { meshes: { key: id, lod, opaque, glass, faces, triangles }, refs: 0, pinned: pin });
         }
     }
 
@@ -189,7 +213,7 @@ export class AvatarLibrary {
         e.refs--;
         if (e.refs > 0 || e.pinned) return;
         this.outfits.delete(key);
-        for (const m of [e.meshes.opaque, e.meshes.glass]) {
+        for (const m of [e.meshes.opaque, e.meshes.glass, ...(e.meshes.faces ?? [])]) {
             if (!m) continue;
             m.decRefCount();
             if (m.refCount < 1) m.destroy();
@@ -207,7 +231,16 @@ export class AvatarLibrary {
         return [0, 1, 2].map((lod) => this.outfits.get(outfitId(k, lod))?.meshes.triangles ?? 0);
     }
 
-    private merge(parts: FilePart[], remap: ((u: number, v: number) => [number, number]) | null): Mesh {
+    /**
+     * Merge parts into one skinned mesh. `pick`: all triangles, only the face-tile triangles
+     * ('face', UVs shifted right by `faceShift` to pick an expression tile) or everything else ('body').
+     */
+    private merge(
+        parts: FilePart[],
+        remap: ((u: number, v: number) => [number, number]) | null,
+        pick: 'all' | 'body' | 'face' = 'all',
+        faceShift = 0
+    ): Mesh {
         const pos: number[] = [];
         const nor: number[] = [];
         const uv: number[] = [];
@@ -252,18 +285,44 @@ export class AvatarLibrary {
             const prim = mesh.primitive[0];
             const start = prim.base ?? 0;
             const end = start + (prim.count ?? ind.length);
-            for (let i = start; i < end; i++) idx.push(ind[i] + base);
+            for (let i = start; i + 2 < end; i += 3) {
+                if (pick !== 'all') {
+                    const face = inFaceBlock(t[ind[i] * 2] ?? 0) && inFaceBlock(t[ind[i + 1] * 2] ?? 0) && inFaceBlock(t[ind[i + 2] * 2] ?? 0);
+                    if (face !== (pick === 'face')) continue;
+                }
+                idx.push(ind[i] + base, ind[i + 1] + base, ind[i + 2] + base);
+            }
         }
+        if (pick === 'face' && faceShift) for (let i = 0; i < uv.length; i += 2) if (inFaceBlock(uv[i])) uv[i] += faceShift;
+        // A partial pick keeps only the vertices its triangles use (the face is a few hundred).
+        const s = pick === 'all' ? null : compact(idx, pos.length / 3);
+        const take = (src: number[], n: number) => (s ? s.order.flatMap((v) => src.slice(v * n, v * n + n)) : src);
         const m = new Mesh(this.app.graphicsDevice);
-        m.setPositions(pos);
-        m.setNormals(nor);
-        m.setUvs(0, uv);
-        m.setVertexStream(SEMANTIC_BLENDINDICES, bi, 4, undefined, TYPE_UINT8);
-        m.setVertexStream(SEMANTIC_BLENDWEIGHT, bw, 4, undefined, TYPE_FLOAT32);
-        m.setIndices(pos.length / 3 > 65535 ? new Uint32Array(idx) : new Uint16Array(idx));
+        m.setPositions(take(pos, 3));
+        m.setNormals(take(nor, 3));
+        m.setUvs(0, take(uv, 2));
+        m.setVertexStream(SEMANTIC_BLENDINDICES, take(bi, 4), 4, undefined, TYPE_UINT8);
+        m.setVertexStream(SEMANTIC_BLENDWEIGHT, take(bw, 4), 4, undefined, TYPE_FLOAT32);
+        const index = s ? s.index : idx;
+        const verts = s ? s.order.length : pos.length / 3;
+        m.setIndices(verts > 65535 ? new Uint32Array(index) : new Uint16Array(index));
         m.update();
         m.skin = this.skin;
         this.merges++;
         return m;
     }
+}
+
+/** Renumber the vertices used by `idx` densely: `order[newIndex] = oldIndex`. */
+export function compact(idx: readonly number[], vertexCount: number): { order: number[]; index: number[] } {
+    const map = new Int32Array(vertexCount).fill(-1);
+    const order: number[] = [];
+    const index = idx.map((v) => {
+        if (map[v] < 0) {
+            map[v] = order.length;
+            order.push(v);
+        }
+        return map[v];
+    });
+    return { order, index };
 }

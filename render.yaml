@@ -5,7 +5,7 @@ services:
     name: colorfront
     runtime: node
     region: singapore        # closest Render region to Korea
-    plan: starter            # 0.5 CPU / 512 MB; the free plan sleeps after 15 min and has 0.1 CPU
+    plan: free               # chosen for now (sleeps after 15 min idle, 0.1 CPU); starter = 0.5 CPU, no sleep
     rootDir: .
     buildCommand: npm ci --include=dev && npm run build
     startCommand: npm run start:server
