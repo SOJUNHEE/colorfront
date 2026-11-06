@@ -12,6 +12,8 @@ export type GameSettings = {
     showFps: boolean;
     /** Recoil camera kick and impact shake (GDD 5.1 accessibility: can be turned off). */
     cameraShake: boolean;
+    /** Lower the render resolution automatically when the frame rate cannot be held (Gate 6). */
+    autoScale: boolean;
 };
 
 export const DEFAULT_SETTINGS: GameSettings = {
@@ -21,7 +23,8 @@ export const DEFAULT_SETTINGS: GameSettings = {
     invertY: false,
     fov: 70,
     showFps: true,
-    cameraShake: true
+    cameraShake: true,
+    autoScale: true
 };
 
 export type QualityProfile = {
@@ -103,7 +106,8 @@ export function normaliseSettings(raw: unknown): GameSettings {
         invertY: typeof r.invertY === 'boolean' ? r.invertY : DEFAULT_SETTINGS.invertY,
         fov: num(r.fov, 55, 100, DEFAULT_SETTINGS.fov),
         showFps: typeof r.showFps === 'boolean' ? r.showFps : DEFAULT_SETTINGS.showFps,
-        cameraShake: typeof r.cameraShake === 'boolean' ? r.cameraShake : DEFAULT_SETTINGS.cameraShake
+        cameraShake: typeof r.cameraShake === 'boolean' ? r.cameraShake : DEFAULT_SETTINGS.cameraShake,
+        autoScale: typeof r.autoScale === 'boolean' ? r.autoScale : DEFAULT_SETTINGS.autoScale
     };
 }
 

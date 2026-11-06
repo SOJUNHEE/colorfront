@@ -4,6 +4,8 @@ import type { PaintScore, PlayerState } from '@colorfront/shared';
 export type FrameStats = {
     fps: number;
     frameMs: number;
+    /** Effective render scale (player setting x automatic fallback). */
+    scale?: number;
 };
 
 const el = <T extends HTMLElement = HTMLElement>(root: HTMLElement, selector: string) =>
@@ -188,7 +190,9 @@ export class Hud {
         const p = state.position;
         const speed = Math.hypot(state.velocity.x, state.velocity.z);
         this.fps.textContent =
-            `FPS ${stats.fps.toFixed(0).padStart(3)}  ${stats.frameMs.toFixed(1)}ms\n` +
+            `FPS ${stats.fps.toFixed(0).padStart(3)}  ${stats.frameMs.toFixed(1)}ms` +
+            (stats.scale !== undefined && stats.scale < 0.999 ? `  RES ${Math.round(stats.scale * 100)}%` : '') +
+            '\n' +
             `SIM ${TICK_RATE}Hz  ${speed.toFixed(2)}m/s  PAINT x${speedMultiplier.toFixed(2)}\n` +
             `POS ${p.x.toFixed(1)} ${p.y.toFixed(1)} ${p.z.toFixed(1)}`;
 

@@ -104,6 +104,7 @@ export class SettingsMenu {
                         <label class="field check"><input type="checkbox" data-key="invertY" /> <span>마우스 Y축 반전</span></label>
                         <label class="field check"><input type="checkbox" data-key="showFps" /> <span>FPS 표시</span></label>
                         <label class="field check"><input type="checkbox" data-key="cameraShake" /> <span>카메라 반동·흔들림</span></label>
+                        <label class="field check"><input type="checkbox" data-key="autoScale" /> <span>자동 해상도 (프레임 유지)</span></label>
                         <div class="field row">
                             <button type="button" class="ghost" data-action="fullscreen">전체화면</button>
                             <button type="button" class="ghost" data-action="reset">기본값</button>

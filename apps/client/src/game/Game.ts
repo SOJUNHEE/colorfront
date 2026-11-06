@@ -46,6 +46,7 @@ import { SceneEnvironment } from '../render/Environment.ts';
 import { PostEffects } from '../render/PostEffects.ts';
 import { buildArena } from '../scenes/ArenaBuilder.ts';
 import type { ArenaView } from '../scenes/ArenaBuilder.ts';
+import { ResolutionGovernor } from '../settings/ResolutionGovernor.ts';
 import { QUALITY_PROFILES, saveSettings } from '../settings/settings.ts';
 import type { GameSettings, GraphicsQuality } from '../settings/settings.ts';
 import { ChatPanel } from '../ui/ChatPanel.ts';
@@ -116,7 +117,10 @@ export class Game {
     private botSerial = 0;
     private frameCount = 0;
     private frameTime = 0;
-    private stats = { fps: 0, frameMs: 0 };
+    private stats = { fps: 0, frameMs: 0, scale: 1 };
+    /** Automatic render-scale fallback (Gate 6). */
+    private readonly governor = new ResolutionGovernor();
+    private warmed = false;
     private readonly frameSamples: number[] = [];
     private readonly tmp = new PcVec3();
     mode: GameMode = 'menu';
@@ -688,13 +692,51 @@ export class Game {
         return this.sim.paint.score();
     }
 
+    /** Device pixel ratio = screen ratio (capped per preset) x render scale x automatic fallback. */
+    private applyPixelRatio() {
+        const s = this.settings;
+        const profile = QUALITY_PROFILES[s.quality];
+        const device = this.app.graphicsDevice;
+        device.maxPixelRatio = Math.min(window.devicePixelRatio || 1, profile.maxPixelRatio) * s.renderScale * this.governor.scale;
+        this.app.resizeCanvas();
+        this.stats.scale = s.renderScale * this.governor.scale;
+    }
+
+    /**
+     * Compile the shaders of shot/impact/burst effects (both teams) once while the start menu is
+     * up, instead of on the first shot in a match (measured 118 ms hitch). Purely visual.
+     */
+    private warmUpEffects() {
+        const cam = this.camera.getPosition();
+        const fwd = this.camera.forward;
+        const at = (d: number) => ({ x: cam.x + fwd.x * d, y: cam.y + fwd.y * d, z: cam.z + fwd.z * d });
+        for (const team of ['blue', 'orange'] as const) {
+            const origin = at(2);
+            const end = at(6);
+            this.effects.fire({ origin, aimPoint: end, flightEnd: end, impact: end, normal: { x: 0, y: 1, z: 0 }, dropped: false } as never, team, 0.5);
+            this.effects.burst(team, at(5));
+            this.effects.hitSpray(team, at(5), { x: fwd.x, y: fwd.y, z: fwd.z });
+        }
+        // Slugs/splats switch on in effects.update (not running behind the menu): advance, draw
+        // one frame now so every shader compiles, then let everything expire immediately.
+        this.effects.update(0.02);
+        this.app.render();
+        for (let i = 0; i < 40; i++) this.effects.update(0.25);
+    }
+
     private measureFrame(dt: number) {
+        // Only gameplay frames drive the automatic resolution (menus and loading do not).
+        if (document.pointerLockElement && this.governor.sample(dt)) this.applyPixelRatio();
+        if (!this.warmed && this.avatars.status === 'ready') {
+            this.warmed = true;
+            this.warmUpEffects();
+        }
         this.frameCount++;
         this.frameTime += dt;
         this.frameSamples.push(dt * 1000);
         if (this.frameSamples.length > 600) this.frameSamples.shift();
         if (this.frameTime >= 0.5) {
-            this.stats = { fps: this.frameCount / this.frameTime, frameMs: (this.frameTime / this.frameCount) * 1000 };
+            this.stats = { fps: this.frameCount / this.frameTime, frameMs: (this.frameTime / this.frameCount) * 1000, scale: this.stats.scale };
             this.frameCount = 0;
             this.frameTime = 0;
         }
@@ -703,9 +745,9 @@ export class Game {
     applySettings() {
         const s = this.settings;
         const profile = QUALITY_PROFILES[s.quality];
-        const device = this.app.graphicsDevice;
-        device.maxPixelRatio = Math.min(window.devicePixelRatio || 1, profile.maxPixelRatio) * s.renderScale;
-        this.app.resizeCanvas();
+        this.governor.enabled = s.autoScale;
+        if (!s.autoScale) this.governor.reset();
+        this.applyPixelRatio();
         if (s.quality !== this.arenaQuality) {
             // Decor density and texture resolution are baked into the level meshes.
             this.arena.destroy();
